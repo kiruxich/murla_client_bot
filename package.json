@@ -1,0 +1,25 @@
+{
+  "name": "murla_client_bot",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.36.0",
+    "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/sql.js": "^1.4.11",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}
