@@ -1,9 +1,9 @@
 import type { MarketplaceId } from "../config/marketplaces.js";
 import type { OrderStatusId } from "../config/order-statuses.js";
 
+/** Адрес(а) забора со своей точки — текст от клиента. */
 export type PickupPoint = {
-  marketplace: MarketplaceId;
-  warehouseId: string;
+  addressText: string;
 };
 
 /** Куда отвезти (маркетплейс + склад назначения). */
@@ -16,6 +16,8 @@ export type FulfillmentOrder = {
   id: string;
   clientTelegramId: number;
   clientUsername?: string;
+  /** Кто создал заявку (менеджер/управляющий), если не сам клиент. */
+  createdByTelegramId?: number;
   status: OrderStatusId;
   /** Шаг 1 — какой товар */
   product: string;
@@ -29,7 +31,9 @@ export type FulfillmentOrder = {
   pickupPoints: PickupPoint[];
   /** Шаг 5 — куда отвезти */
   delivery: DeliveryPoint;
-  /** Шаг 6 — комментарий */
+  /** Желаемая дата поставки (текст от клиента, например 15.04.2026). */
+  desiredDeliveryDate?: string;
+  /** Шаг 7 — комментарий */
   comment?: string;
   createdAt: number;
   updatedAt: number;

@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "reset-role": "tsx scripts/reset-role-lock.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

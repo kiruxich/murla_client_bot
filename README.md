@@ -4,9 +4,12 @@ Telegram-бот Мурлы: заявки, точки забора WB/Ozon, ст�
 
 ## Быстрый старт (локально)
 
-1. Скопируйте `.env.example` → `.env`, укажите **`BOT_TOKEN`** от [@BotFather](https://t.me/BotFather). Файл подхватывается автоматически (`dotenv`) из **корня проекта** при `pnpm dev`.
-2. Для мока ролей без whitelist: **`WHITELIST_BYPASS=true`**.
-3. Установка и запуск (long polling):
+1. Скопируйте **`cp .env.example .env`**, заполните токены. Файл подхватывается при `pnpm dev`.
+2. **Прод и dev — два бота:** в [@BotFather](https://t.me/BotFather) создайте отдельного бота для разработки. В **`.env`**: **`BOT_TOKEN`** = прод (как на Vercel), **`BOT_TOKEN_DEV`** = второй бот, **`USE_DEV_BOT=true`** — тогда `pnpm dev` использует dev-бота и локальную БД, продовый webhook не мешает.
+3. **На Vercel** в переменных окружения укажите только **`BOT_TOKEN`** (прод). **`USE_DEV_BOT` и `BOT_TOKEN_DEV` не задавайте** (или `USE_DEV_BOT=false`).
+4. **Локально с SQLite:** **`DEV_USE_SQLITE=true`** — файл **`data/bot.db`**, даже если в `.env` есть `POSTGRES_URL`.
+5. Для мока ролей без whitelist: **`WHITELIST_BYPASS=true`**.
+6. Установка и запуск (long polling):
 
 ```bash
 pnpm install
@@ -32,7 +35,7 @@ pnpm dev
 ## Vercel (webhook)
 
 1. Задеплойте проект; URL функции: `https://<project>.vercel.app/api/telegram`.
-2. Установите переменные **`BOT_TOKEN`**, при необходимости **`WHITELIST_BYPASS`**.
+2. Установите **`BOT_TOKEN`** (прод), **`POSTGRES_URL` / `DATABASE_URL`** при необходимости, **`WHITELIST_BYPASS`** — по ситуации. Не включайте **`USE_DEV_BOT`** на проде.
 3. Установите webhook:
 
 ```text

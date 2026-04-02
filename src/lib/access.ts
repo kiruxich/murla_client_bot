@@ -57,10 +57,21 @@ export const getRoleEntryPolicy = (telegramUserId: number): RoleEntryPolicy => {
 };
 
 /**
- * Доступ к роли: в моке — всё; иначе роль «клиент» доступна всем (остальные — по `ROLE_WHITELIST`).
+ * Доступ к роли:
+ * - `WHITELIST_BYPASS=true` — любая роль любому пользователю;
+ * - ID из `ROLE_ALWAYS_SWITCH_IDS` / `ROLE_LOCK_FIRST_IDS` (и список ID в `WHITELIST_BYPASS`) — все роли
+ *   при показе клавиатуры выбора (эти переменные как раз задают «кому показывать выбор»);
+ * - «клиент» — всем;
+ * - остальные роли — по `ROLE_WHITELIST` в коде.
  */
 export const canUseRole = (telegramUserId: number, role: BotRole): boolean => {
   if (isFullWhitelistBypass()) {
+    return true;
+  }
+  if (
+    getAlwaysSwitchUserIds().has(telegramUserId) ||
+    getLockFirstPickUserIds().has(telegramUserId)
+  ) {
     return true;
   }
   if (role === "client") {

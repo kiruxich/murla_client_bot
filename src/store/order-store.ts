@@ -1,22 +1,22 @@
 import type { MarketplaceId } from "../config/marketplaces.js";
 import type { OrderStatusId } from "../config/order-statuses.js";
-import type {
-  DeliveryPoint,
-  FulfillmentOrder,
-  PickupPoint,
-} from "../domain/order.js";
+import type { DeliveryPoint, FulfillmentOrder, PickupPoint } from "../domain/order.js";
 import { getDb, getDbBackend, persistDb } from "../lib/db.js";
+import { parsePickupPointsFromJson } from "../lib/pickup-points.js";
 import { getNeonSql } from "../lib/neon-sql.js";
 
 export type CreateOrderInput = {
   clientTelegramId: number;
   clientUsername?: string;
+  /** Заполняется при оформлении заявки менеджером/управляющим за клиента. */
+  createdByTelegramId?: number;
   product: string;
   quantityText: string;
   tz: string;
   needsPickup: boolean;
   pickupPoints: PickupPoint[];
   delivery: DeliveryPoint;
+  desiredDeliveryDate?: string;
   comment?: string;
 };
 
@@ -32,26 +32,24 @@ type OrderRow = {
   pickup_points_json: string;
   delivery_marketplace: string;
   delivery_warehouse_id: string;
+  desired_delivery_date: string | null;
   comment: string | null;
   created_at: number;
   updated_at: number;
   driver_unload_pending: number;
+  created_by_telegram_id: number | null;
 };
 
 const rowToOrder = (row: OrderRow): FulfillmentOrder => {
-  let pickupPoints: PickupPoint[] = [];
-  try {
-    const parsed = JSON.parse(row.pickup_points_json) as unknown;
-    if (Array.isArray(parsed)) {
-      pickupPoints = parsed as PickupPoint[];
-    }
-  } catch {
-    pickupPoints = [];
-  }
+  const pickupPoints = parsePickupPointsFromJson(row.pickup_points_json);
   return {
     id: row.id,
     clientTelegramId: row.client_telegram_id,
     clientUsername: row.client_username ?? undefined,
+    createdByTelegramId:
+      row.created_by_telegram_id === null || row.created_by_telegram_id === undefined
+        ? undefined
+        : Number(row.created_by_telegram_id),
     status: row.status as OrderStatusId,
     product: row.product,
     quantityText: row.quantity_text,
@@ -62,6 +60,9 @@ const rowToOrder = (row: OrderRow): FulfillmentOrder => {
       marketplace: row.delivery_marketplace as MarketplaceId,
       warehouseId: row.delivery_warehouse_id,
     },
+    desiredDeliveryDate: row.desired_delivery_date?.trim()
+      ? row.desired_delivery_date.trim()
+      : undefined,
     comment: row.comment?.trim() ? row.comment : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -84,10 +85,18 @@ const pgRowToOrderRow = (row: Record<string, unknown>): OrderRow => ({
   pickup_points_json: String(row.pickup_points_json),
   delivery_marketplace: String(row.delivery_marketplace),
   delivery_warehouse_id: String(row.delivery_warehouse_id),
+  desired_delivery_date:
+    row.desired_delivery_date === null || row.desired_delivery_date === undefined
+      ? null
+      : String(row.desired_delivery_date),
   comment: row.comment === null || row.comment === undefined ? null : String(row.comment),
   created_at: Number(row.created_at),
   updated_at: Number(row.updated_at),
   driver_unload_pending: Number(row.driver_unload_pending),
+  created_by_telegram_id:
+    row.created_by_telegram_id === null || row.created_by_telegram_id === undefined
+      ? null
+      : Number(row.created_by_telegram_id),
 });
 
 const sqliteGetRow = (id: string): OrderRow | undefined => {
@@ -112,10 +121,18 @@ const sqliteGetRow = (id: string): OrderRow | undefined => {
     pickup_points_json: String(obj.pickup_points_json),
     delivery_marketplace: String(obj.delivery_marketplace),
     delivery_warehouse_id: String(obj.delivery_warehouse_id),
+    desired_delivery_date:
+      obj.desired_delivery_date === null || obj.desired_delivery_date === undefined
+        ? null
+        : String(obj.desired_delivery_date),
     comment: obj.comment === null || obj.comment === undefined ? null : String(obj.comment),
     created_at: Number(obj.created_at),
     updated_at: Number(obj.updated_at),
     driver_unload_pending: Number(obj.driver_unload_pending),
+    created_by_telegram_id:
+      obj.created_by_telegram_id === null || obj.created_by_telegram_id === undefined
+        ? null
+        : Number(obj.created_by_telegram_id),
   };
 };
 
@@ -140,9 +157,9 @@ const sqliteInsertOrder = (o: FulfillmentOrder): void => {
     `INSERT INTO orders (
         id, client_telegram_id, client_username, status,
         product, quantity_text, tz, needs_pickup, pickup_points_json,
-        delivery_marketplace, delivery_warehouse_id, comment,
-        created_at, updated_at, driver_unload_pending
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        delivery_marketplace, delivery_warehouse_id, desired_delivery_date, comment,
+        created_at, updated_at, driver_unload_pending, created_by_telegram_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       o.id,
       o.clientTelegramId,
@@ -155,10 +172,12 @@ const sqliteInsertOrder = (o: FulfillmentOrder): void => {
       JSON.stringify(o.pickupPoints),
       o.delivery.marketplace,
       o.delivery.warehouseId,
+      o.desiredDeliveryDate ?? null,
       o.comment ?? null,
       o.createdAt,
       o.updatedAt,
       o.driverUnloadPending ? 1 : 0,
+      o.createdByTelegramId ?? null,
     ],
   );
   persistDb();
@@ -178,10 +197,12 @@ const sqliteReplaceOrder = (o: FulfillmentOrder): void => {
         pickup_points_json = ?,
         delivery_marketplace = ?,
         delivery_warehouse_id = ?,
+        desired_delivery_date = ?,
         comment = ?,
         created_at = ?,
         updated_at = ?,
-        driver_unload_pending = ?
+        driver_unload_pending = ?,
+        created_by_telegram_id = ?
       WHERE id = ?`,
     [
       o.clientTelegramId,
@@ -194,10 +215,12 @@ const sqliteReplaceOrder = (o: FulfillmentOrder): void => {
       JSON.stringify(o.pickupPoints),
       o.delivery.marketplace,
       o.delivery.warehouseId,
+      o.desiredDeliveryDate ?? null,
       o.comment ?? null,
       o.createdAt,
       o.updatedAt,
       o.driverUnloadPending ? 1 : 0,
+      o.createdByTelegramId ?? null,
       o.id,
     ],
   );
@@ -226,8 +249,8 @@ const pgInsertOrder = async (o: FulfillmentOrder): Promise<void> => {
     INSERT INTO orders (
       id, client_telegram_id, client_username, status,
       product, quantity_text, tz, needs_pickup, pickup_points_json,
-      delivery_marketplace, delivery_warehouse_id, comment,
-      created_at, updated_at, driver_unload_pending
+      delivery_marketplace, delivery_warehouse_id, desired_delivery_date, comment,
+      created_at, updated_at, driver_unload_pending, created_by_telegram_id
     ) VALUES (
       ${o.id},
       ${o.clientTelegramId},
@@ -240,10 +263,12 @@ const pgInsertOrder = async (o: FulfillmentOrder): Promise<void> => {
       ${JSON.stringify(o.pickupPoints)},
       ${o.delivery.marketplace},
       ${o.delivery.warehouseId},
+      ${o.desiredDeliveryDate ?? null},
       ${o.comment ?? null},
       ${o.createdAt},
       ${o.updatedAt},
-      ${o.driverUnloadPending ? 1 : 0}
+      ${o.driverUnloadPending ? 1 : 0},
+      ${o.createdByTelegramId ?? null}
     )
   `;
 };
@@ -262,10 +287,12 @@ const pgReplaceOrder = async (o: FulfillmentOrder): Promise<void> => {
       pickup_points_json = ${JSON.stringify(o.pickupPoints)},
       delivery_marketplace = ${o.delivery.marketplace},
       delivery_warehouse_id = ${o.delivery.warehouseId},
+      desired_delivery_date = ${o.desiredDeliveryDate ?? null},
       comment = ${o.comment ?? null},
       created_at = ${o.createdAt},
       updated_at = ${o.updatedAt},
-      driver_unload_pending = ${o.driverUnloadPending ? 1 : 0}
+      driver_unload_pending = ${o.driverUnloadPending ? 1 : 0},
+      created_by_telegram_id = ${o.createdByTelegramId ?? null}
     WHERE id = ${o.id}
   `;
 };
@@ -279,6 +306,7 @@ export const orderStore = {
         id,
         clientTelegramId: input.clientTelegramId,
         clientUsername: input.clientUsername,
+        createdByTelegramId: input.createdByTelegramId,
         status: "draft",
         product: input.product,
         quantityText: input.quantityText,
@@ -286,6 +314,7 @@ export const orderStore = {
         needsPickup: input.needsPickup,
         pickupPoints: [...input.pickupPoints],
         delivery: { ...input.delivery },
+        desiredDeliveryDate: input.desiredDeliveryDate?.trim() || undefined,
         comment: input.comment?.trim() || undefined,
         createdAt: now,
         updatedAt: now,
@@ -298,6 +327,7 @@ export const orderStore = {
       id: sqliteNextId(),
       clientTelegramId: input.clientTelegramId,
       clientUsername: input.clientUsername,
+      createdByTelegramId: input.createdByTelegramId,
       status: "draft",
       product: input.product,
       quantityText: input.quantityText,
@@ -305,6 +335,7 @@ export const orderStore = {
       needsPickup: input.needsPickup,
       pickupPoints: [...input.pickupPoints],
       delivery: { ...input.delivery },
+      desiredDeliveryDate: input.desiredDeliveryDate?.trim() || undefined,
       comment: input.comment?.trim() || undefined,
       createdAt: now,
       updatedAt: now,
@@ -357,10 +388,18 @@ export const orderStore = {
         pickup_points_json: String(obj.pickup_points_json),
         delivery_marketplace: String(obj.delivery_marketplace),
         delivery_warehouse_id: String(obj.delivery_warehouse_id),
+        desired_delivery_date:
+          obj.desired_delivery_date === null || obj.desired_delivery_date === undefined
+            ? null
+            : String(obj.desired_delivery_date),
         comment: obj.comment === null || obj.comment === undefined ? null : String(obj.comment),
         created_at: Number(obj.created_at),
         updated_at: Number(obj.updated_at),
         driver_unload_pending: Number(obj.driver_unload_pending),
+        created_by_telegram_id:
+          obj.created_by_telegram_id === null || obj.created_by_telegram_id === undefined
+            ? null
+            : Number(obj.created_by_telegram_id),
       });
     }
     stmt.free();
@@ -410,6 +449,22 @@ export const orderStore = {
 
   async setDriverUnloadPending(id: string, pending: boolean): Promise<FulfillmentOrder | undefined> {
     return this.update(id, { driverUnloadPending: pending });
+  },
+
+  async delete(id: string): Promise<boolean> {
+    const existing = await this.get(id);
+    if (!existing) {
+      return false;
+    }
+    if (getDbBackend() === "postgres") {
+      const sql = getNeonSql();
+      await sql`DELETE FROM orders WHERE id = ${id}`;
+      return true;
+    }
+    const database = getDb();
+    database.run("DELETE FROM orders WHERE id = ?", [id]);
+    persistDb();
+    return true;
   },
 };
 

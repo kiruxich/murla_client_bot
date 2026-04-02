@@ -21,11 +21,12 @@ export type OrderStatusId = (typeof ORDER_STATUS_IDS)[number];
 export const ORDER_STATUS_LABEL: Record<OrderStatusId, string> = {
   draft: "Черновик / заявка",
   accepted: "Принято в работу",
-  receiving: "Приёмка на складе",
-  receiving_done: "Приёмка завершена",
-  pack_sort: "Упаковка и сортировка",
-  prep_unload: "Подготовка к выгрузке",
-  ready_for_unload: "Готово к выгрузке",
+  receiving: "Принято на складе Мурла",
+  receiving_done: "Товар в работе",
+  pack_sort: "Товар готов к отгрузке",
+  /** Старые заявки до смены сценария; новые заявки сюда не попадают. */
+  prep_unload: "Подготовка к выгрузке (устар.)",
+  ready_for_unload: "Готово к рейсу",
   in_transit: "В пути",
   done: "Завершено",
   cancelled: "Отменено",

@@ -9,7 +9,7 @@ import { formatOrderHtml } from "./format.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Рассылка при смене статуса (клиент + менеджер + управляющий по конфигу). Упаковщик/водитель не получают. */
+/** Рассылка при смене статуса: клиент, работник склада, менеджер и управляющий — по `NOTIFY_ON_STATUS` и whitelist. Водитель — отдельно. */
 export const notifyOnStatusChange = async (
   api: Api,
   order: FulfillmentOrder,
@@ -47,8 +47,11 @@ export const notifyOnStatusChange = async (
   }
 };
 
-/** Уведомление водителю до подтверждения «готово к выгрузке». */
-export const notifyDriverUnloadRequest = async (
+/**
+ * Заявка передана водителю со склада (статус уже «Готово к рейсу»).
+ * Водитель получает отдельное сообщение с кнопкой открытия карточки.
+ */
+export const notifyDriversWarehouseHandoff = async (
   api: Api,
   order: FulfillmentOrder,
   driverTelegramIds: readonly number[],
@@ -57,15 +60,11 @@ export const notifyDriverUnloadRequest = async (
     return;
   }
   const text =
-    `🚚 <b>Нужно подтвердить выгрузку</b>\n` +
-    `Заявка №${order.id}\n\n` +
-    formatOrderHtml(order) +
-    `\n\nНажмите кнопку ниже — после этого статус станет «${ORDER_STATUS_LABEL.ready_for_unload}».`;
+    `🚚 <b>Заявка передана вам</b>\n` +
+    `№${order.id} — ${ORDER_STATUS_LABEL.ready_for_unload}\n\n` +
+    formatOrderHtml(order);
 
-  const kb = new InlineKeyboard().text(
-    "Подтвердить готовность к выгрузке",
-    `o:${order.id}:dvc`,
-  );
+  const kb = new InlineKeyboard().text("Открыть заявку", `vd:${order.id}`);
 
   for (const chatId of driverTelegramIds) {
     try {

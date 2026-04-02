@@ -1,6 +1,7 @@
 import {
   Bot,
   InlineKeyboard,
+  Keyboard,
   MemorySessionStorage,
   session,
   type Context,
@@ -17,52 +18,187 @@ import { ROLE_WHITELIST } from "../config/role-whitelist.js";
 import { warehousesByMarketplace } from "../config/warehouses.js";
 import { findWarehouseById } from "../config/warehouses.js";
 import type { BotRole } from "../lib/roles.js";
-import { BOT_ROLES } from "../lib/roles.js";
+import { BOT_ROLES, isManagerLikeRole } from "../lib/roles.js";
 import { canUseRole, getRoleEntryPolicy } from "../lib/access.js";
+import { getLastSelectedBotRole, setLastSelectedBotRole } from "../store/last-bot-role-store.js";
 import { getLockedRole, setLockedRole } from "../store/user-role-store.js";
 import { orderStore } from "../store/order-store.js";
-import { emptyOrderDraft, type SessionData } from "./session-data.js";
-import { formatDraftSummaryHtml, formatOrderHtml } from "./format.js";
-import { notifyDriverUnloadRequest, notifyOnStatusChange } from "./notify.js";
+import {
+  getBusinessNamesForTelegramIds,
+  getClientDisplayNameForOrderList,
+  getClientUsername,
+  isClientRegistered,
+  listClientsForPicker,
+  needsBusinessName,
+  needsPhoneVerification,
+  saveClientConsent,
+  setClientBusinessName,
+  setClientPhone,
+} from "../store/client-store.js";
+import type { FulfillmentOrder } from "../domain/order.js";
+import {
+  emptyOrderDraft,
+  type ClientOrdersListMode,
+  type OrderDraft,
+  type SessionData,
+} from "./session-data.js";
+import { escapeHtml, formatDraftSummaryHtml, formatOrderHtml } from "./format.js";
+import { appendOrderDraftMinimap } from "./order-draft-minimap.js";
+import { orderListButtonLabel } from "./order-list-label.js";
+import { notifyDriversWarehouseHandoff, notifyOnStatusChange } from "./notify.js";
+
+/** HTML сообщения черновика + визуальная «миникарта» маршрута. */
+const draftMsg = (bodyHtml: string, draft: OrderDraft | undefined): string =>
+  appendOrderDraftMinimap(bodyHtml, draft);
 
 export type MyContext = Context & SessionFlavor<SessionData>;
 
 const roleLabel: Record<BotRole, string> = {
   client: "Клиент",
-  packer: "Упаковщик",
+  packer: "Работник склада",
   driver: "Водитель",
   manager: "Менеджер",
   supervisor: "Управляющий",
 };
 
-const packerNextStatus: Partial<Record<OrderStatusId, OrderStatusId>> = {
+/** Кто может редактировать текущий черновик: клиент (свой) или менеджер/управляющий в режиме proxy. */
+const canUseOrderDraft = (ctx: MyContext): boolean => {
+  const role = ctx.session.role;
+  const d = ctx.session.orderDraft;
+  if (!d || !role) {
+    return false;
+  }
+  if (role === "client") {
+    return !d.proxyClientTelegramId;
+  }
+  if (isManagerLikeRole(role)) {
+    if (d.step === "proxy_client_id") {
+      return true;
+    }
+    return d.proxyClientTelegramId !== undefined && d.proxyClientTelegramId > 0;
+  }
+  return false;
+};
+
+const canFinalizeDraft = (ctx: MyContext): boolean => {
+  const role = ctx.session.role;
+  const d = ctx.session.orderDraft;
+  if (!d || !role) {
+    return false;
+  }
+  if (role === "client" && !d.proxyClientTelegramId) {
+    return true;
+  }
+  if (isManagerLikeRole(role) && d.proxyClientTelegramId !== undefined && d.proxyClientTelegramId > 0) {
+    return true;
+  }
+  return false;
+};
+
+/** Линейные этапы склада до передачи водителю (без «следующий этап» — только явные кнопки в карточке). */
+const PACKER_WAREHOUSE_LINEAR: Partial<Record<OrderStatusId, OrderStatusId>> = {
   accepted: "receiving",
   receiving: "receiving_done",
   receiving_done: "pack_sort",
-  pack_sort: "prep_unload",
 };
+
+const appendPackerWarehouseActions = (kb: InlineKeyboard, orderId: string, o: FulfillmentOrder): void => {
+  if (o.status === "accepted") {
+    kb.text("📥 Принято на складе Мурла", `o:${orderId}:pkr`).row();
+    return;
+  }
+  if (o.status === "receiving") {
+    kb.text("🔧 Товар в работе", `o:${orderId}:pkr`).row();
+    return;
+  }
+  if (o.status === "receiving_done") {
+    kb.text("📦 Товар готов к отгрузке", `o:${orderId}:pkr`).row();
+    return;
+  }
+  if (o.status === "pack_sort") {
+    kb.text("🚚 Передать водителю", `o:${orderId}:pkr`).row();
+    return;
+  }
+  if (o.status === "prep_unload") {
+    if (o.driverUnloadPending) {
+      kb.text("⏳ Ждём подтверждения водителя", "noop:0").row();
+    } else {
+      kb.text("🚚 Передать водителю", `o:${orderId}:pkr`).row();
+    }
+  }
+};
+
+/** Клавиатура карточки заявки для работника склада: этап + список + меню (как при открытии через «v:»). */
+const packerOrderDetailKeyboard = (ctx: MyContext, orderId: string, o: FulfillmentOrder): InlineKeyboard => {
+  const kb = new InlineKeyboard();
+  appendPackerWarehouseActions(kb, orderId, o);
+  const listCb =
+    ctx.session.packerListSource === "archive" ? "menu:packer_archive" : "menu:packer_orders";
+  kb.text("« К списку", listCb).row();
+  kb.text("« Меню", "menu:back");
+  return kb;
+};
+
+/** Карточка заявки для водителя (в т.ч. архив — «К списку» ведёт в нужный список). */
+const driverOrderDetailKeyboard = (ctx: MyContext, orderId: string, o: FulfillmentOrder): InlineKeyboard => {
+  const kb = new InlineKeyboard();
+  if (o.driverUnloadPending) {
+    kb.text("✅ Подтвердить готовность к выгрузке", `o:${orderId}:dvc`).row();
+  }
+  if (o.status === "ready_for_unload") {
+    kb.text("🚛 В пути", `o:${orderId}:dvt`).row();
+  }
+  if (o.status === "in_transit") {
+    kb.text("✔️ Завершено", `o:${orderId}:dvf`).row();
+  }
+  const listCb =
+    ctx.session.driverListSource === "archive" ? "menu:driver_archive" : "menu:driver_orders";
+  kb.text("« К списку", listCb).row();
+  kb.text("« Меню", "menu:back");
+  return kb;
+};
+
+const sortOrdersByUpdatedDesc = (orders: FulfillmentOrder[]): FulfillmentOrder[] =>
+  [...orders].sort((a, b) => b.updatedAt - a.updatedAt);
+
+const MURLA_SITE_URL = "https://murla.company";
+const MURLA_GROUP_TG_URL = "https://t.me/MurlaWbOzonFF";
+
+/** Сайт и группа Telegram — для всех ролей в главном меню (по одной кнопке в ряд — длинные подписи). */
+const withMurlaLinksRow = (kb: InlineKeyboard): InlineKeyboard =>
+  kb
+    .row()
+    .url("🌐 Сайт компании — murla.company", MURLA_SITE_URL)
+    .row()
+    .url("💬 Группа в Telegram: новости, WB и Ozon", MURLA_GROUP_TG_URL);
 
 const mainMenuKeyboard = (role: BotRole): InlineKeyboard => {
   const kb = new InlineKeyboard();
   if (role === "client") {
     kb.text("➕ Новая заявка", "menu:new_order").row();
-    kb.text("📋 Мои заявки", "menu:my_orders");
-    return kb;
+    kb.text("📋 Все заявки", "menu:my_orders").row();
+    kb.text("📄 Черновики", "menu:my_drafts").row();
+    kb.text("🔄 Активные", "menu:my_active").row();
+    kb.text("✏️ Название ИП / магазина", "menu:edit_business");
+    return withMurlaLinksRow(kb);
   }
   if (role === "packer") {
-    kb.text("📦 Заявки в работе", "menu:packer_orders");
-    return kb;
+    kb.text("📦 Заявки", "menu:packer_orders").row();
+    kb.text("📁 Архив выполненных", "menu:packer_archive");
+    return withMurlaLinksRow(kb);
   }
   if (role === "driver") {
-    kb.text("🚚 Задачи водителя", "menu:driver_orders");
-    return kb;
+    kb.text("🚚 Заявки", "menu:driver_orders").row();
+    kb.text("📁 Архив выполненных", "menu:driver_archive");
+    return withMurlaLinksRow(kb);
   }
-  if (role === "manager" || role === "supervisor") {
+  if (isManagerLikeRole(role)) {
+    kb.text("➕ Заявка за клиента", "menu:proxy_order").row();
     kb.text("📑 Все заявки", "menu:all_orders").row();
     kb.text("📊 Отчёт", "menu:report");
-    return kb;
+    return withMurlaLinksRow(kb);
   }
-  return kb;
+  return withMurlaLinksRow(kb);
 };
 
 const roleSelectKeyboard = (userId: number): InlineKeyboard => {
@@ -76,7 +212,178 @@ const roleSelectKeyboard = (userId: number): InlineKeyboard => {
   return kb;
 };
 
-const sendMainMenu = async (ctx: MyContext, role: BotRole): Promise<void> => {
+const kbMenuRow = (kb: InlineKeyboard): InlineKeyboard =>
+  kb.row().text("« Меню", "menu:back");
+
+const kbCancelOnly = (): InlineKeyboard => new InlineKeyboard().text("« Отмена", "menu:back");
+
+const kbBackCancel = (): InlineKeyboard =>
+  new InlineKeyboard()
+    .text("« Назад", "draft:nav_back")
+    .row()
+    .text("« Отмена", "menu:back");
+
+const kbPickupDecision = (): InlineKeyboard =>
+  kbMenuRow(
+    new InlineKeyboard()
+      .text("Да", "pickup:y")
+      .text("Нет", "pickup:n")
+      .row()
+      .text("« Назад", "draft:nav_back"),
+  );
+
+const MSG_PICK_ADDRESS_FIRST =
+  "📍 <b>Шаг 4/7 — забор товара</b>\nУкажите <b>адрес забора</b> одним сообщением (своя точка / как добраться).";
+
+const MSG_DESIRED_DELIVERY_DATE =
+  "📅 <b>Шаг 6/7</b>\n<b>Желаемая дата поставки.</b>\n\nУкажите дату одним сообщением (например <code>15.04.2026</code>) или нажмите «Пропустить дату».";
+
+const MSG_PICK_ADDRESS_NEXT =
+  "📍 Укажите адрес <b>следующей</b> точки забора одним сообщением:";
+
+const MSG_AFTER_PICKUP_ADDED =
+  "✅ Адрес добавлен.\n\nДобавить ещё одну точку забора или перейти к выбору <b>места доставки</b>?";
+
+const kbPickAfterPoint = (): InlineKeyboard =>
+  new InlineKeyboard()
+    .text("➕ Ещё точка забора", "pmore:y")
+    .row()
+    .text("➡️ Дальше (куда везти)", "pmore:n")
+    .row()
+    .text("« Назад", "draft:nav_back")
+    .row()
+    .text("« Отмена", "menu:back");
+
+const kbDeliveryMarketplaceFooter = (kb: InlineKeyboard): InlineKeyboard =>
+  kb.row().text("« Назад", "draft:nav_back").row().text("« Отмена", "menu:back");
+
+const kbDesiredDate = (): InlineKeyboard =>
+  new InlineKeyboard()
+    .text("Пропустить дату", "skip:desired_date")
+    .row()
+    .text("« Назад", "draft:nav_back")
+    .row()
+    .text("« Отмена", "menu:back");
+
+const kbConfirmDraft = (): InlineKeyboard =>
+  new InlineKeyboard()
+    .text("✅ Создать черновик", "draft:create")
+    .row()
+    .text("« Назад", "draft:nav_back")
+    .row()
+    .text("« Отмена", "menu:back");
+
+const ordersListCallback = (role: BotRole): string => {
+  if (role === "client") {
+    return "menu:my_orders";
+  }
+  if (role === "packer") {
+    return "menu:packer_orders";
+  }
+  if (role === "driver") {
+    return "menu:driver_orders";
+  }
+  return "menu:all_orders";
+};
+
+const clientOrdersListCallback = (ctx: MyContext): string => {
+  const m = ctx.session.clientOrdersListMode;
+  if (m === "drafts") {
+    return "menu:my_drafts";
+  }
+  if (m === "active") {
+    return "menu:my_active";
+  }
+  return "menu:my_orders";
+};
+
+const isActiveClientOrder = (o: FulfillmentOrder): boolean =>
+  o.status !== "draft" && o.status !== "done" && o.status !== "cancelled";
+
+const setClientListMode = (ctx: MyContext, mode: ClientOrdersListMode): void => {
+  ctx.session.clientOrdersListMode = mode;
+};
+
+const MSG_PHONE_VERIFICATION =
+  "📱 <b>Подтверждение номера</b>\n\n" +
+  "Нажмите кнопку ниже — Telegram передаст номер, привязанный к вашему аккаунту. " +
+  "Он нужен для связи по заявкам.";
+
+const phoneRequestKeyboard = (): Keyboard =>
+  new Keyboard().requestContact("📱 Отправить мой номер").resized();
+
+const sendPhoneVerificationPrompt = async (ctx: MyContext): Promise<void> => {
+  await ctx.reply(MSG_PHONE_VERIFICATION, {
+    parse_mode: "HTML",
+    reply_markup: phoneRequestKeyboard(),
+  });
+};
+
+const MSG_BUSINESS_NAME =
+  "🏷 <b>Регистрация — шаг 3</b>\n\n" +
+  "Введите <b>одним сообщением</b>, как отображать вас в заявках:\n\n" +
+  "• название ИП — например: <code>ИП Склемин Кирилл Андреевич</code>\n" +
+  "• или название магазина — например: <code>КИС КИС</code>";
+
+const sendBusinessNamePrompt = async (ctx: MyContext): Promise<void> => {
+  await ctx.reply(MSG_BUSINESS_NAME, { parse_mode: "HTML" });
+};
+
+type SendMainMenuOpts = {
+  /** Сразу после первого ввода названия ИП / магазина — одно сообщение с меню. */
+  clientRegistrationComplete?: boolean;
+  /** После смены названия из меню «Название ИП / магазина». */
+  clientBusinessNameUpdated?: boolean;
+};
+
+const sendMainMenu = async (
+  ctx: MyContext,
+  role: BotRole,
+  opts?: SendMainMenuOpts,
+): Promise<void> => {
+  const uid = ctx.from?.id;
+  if (role === "client" && uid !== undefined) {
+    if (await isClientRegistered(uid)) {
+      let lead = "";
+      if (opts?.clientRegistrationComplete) {
+        lead = "✅ <b>Регистрация завершена.</b>\n\n";
+      } else if (opts?.clientBusinessNameUpdated) {
+        lead = "✅ <b>Название ИП / магазина обновлено.</b>\n\n";
+      }
+      const text = `Роль: <b>${roleLabel[role]}</b>\n\n${lead}Выберите действие:`;
+      if (ctx.callbackQuery?.message) {
+        await ctx.editMessageText(text, {
+          parse_mode: "HTML",
+          reply_markup: mainMenuKeyboard(role),
+        });
+      } else {
+        await ctx.reply(text, {
+          parse_mode: "HTML",
+          reply_markup: mainMenuKeyboard(role),
+        });
+      }
+      return;
+    }
+    if (await needsPhoneVerification(uid)) {
+      /** Одно сообщение с reply-клавиатурой; не дублировать с editMessageText. */
+      await sendPhoneVerificationPrompt(ctx);
+      return;
+    }
+    if (await needsBusinessName(uid)) {
+      await sendBusinessNamePrompt(ctx);
+      return;
+    }
+    const kb = new InlineKeyboard().text("✅ Согласен с условиями", "reg:accept");
+    const consentText =
+      "📋 <b>Регистрация — шаг 1</b>\n\n" +
+      "Для работы с заявками подтвердите согласие с условиями обслуживания и получения уведомлений в Telegram.";
+    if (ctx.callbackQuery?.message) {
+      await ctx.editMessageText(consentText, { parse_mode: "HTML", reply_markup: kb });
+    } else {
+      await ctx.reply(consentText, { parse_mode: "HTML", reply_markup: kb });
+    }
+    return;
+  }
   const text = `Роль: <b>${roleLabel[role]}</b>\n\nВыберите действие:`;
   if (ctx.callbackQuery?.message) {
     await ctx.editMessageText(text, {
@@ -91,6 +398,33 @@ const sendMainMenu = async (ctx: MyContext, role: BotRole): Promise<void> => {
   }
 };
 
+/** Подпись «Клиент: …» только если пользователь полностью зарегистрирован в боте. */
+const proxyTargetClientCaptionHtml = async (telegramId: number): Promise<string> => {
+  if (!(await isClientRegistered(telegramId))) {
+    return "";
+  }
+  const label = await getClientDisplayNameForOrderList(telegramId);
+  return `\n\nКлиент: <b>${escapeHtml(label)}</b>`;
+};
+
+const showProxyOrderPicker = async (ctx: MyContext): Promise<void> => {
+  const rows = await listClientsForPicker();
+  const kb = new InlineKeyboard();
+  for (const c of rows) {
+    const label = c.label.length > 36 ? `${c.label.slice(0, 33)}…` : c.label;
+    kb.text(label, `pxc:${c.telegramId}`).row();
+  }
+  kb.text("➕ Новый (ввести id)", "pxc:new").row();
+  kb.text("« Меню", "menu:back");
+  const text =
+    "👤 <b>Заявка за клиента</b>\n\nВыберите клиента из списка или укажите Telegram user id нового клиента.";
+  if (ctx.callbackQuery?.message) {
+    await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
+  } else {
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+  }
+};
+
 export const registerHandlers = (bot: Bot<MyContext>): void => {
   bot.use(
     session({
@@ -99,18 +433,39 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     }),
   );
 
+  /**
+   * На serverless (Vercel) сессия в памяти не сохраняется между запросами.
+   * Восстанавливаем роль из БД: закреплённая (lock_first) или последняя выбранная.
+   */
+  bot.use(async (ctx, next) => {
+    const uid = ctx.from?.id;
+    if (uid !== undefined && ctx.session.role === undefined) {
+      const locked = await getLockedRole(uid);
+      if (locked) {
+        ctx.session.role = locked;
+      } else {
+        const last = await getLastSelectedBotRole(uid);
+        if (last && canUseRole(uid, last)) {
+          ctx.session.role = last;
+        }
+      }
+    }
+    await next();
+  });
+
   bot.command("start", async (ctx) => {
     const uid = ctx.from?.id;
     if (uid === undefined) {
       return;
     }
     ctx.session.orderDraft = undefined;
+    ctx.session.editingBusinessName = undefined;
     const policy = getRoleEntryPolicy(uid);
 
     if (policy === "full_bypass") {
       ctx.session.role = undefined;
       await ctx.reply(
-        "👋 <b>Мурла — бот заявок</b>\n\n<i>Режим WHITELIST_BYPASS: любая роль.</i>\n\nВыберите роль:",
+        "👋 <b>Мурла — бот помощник</b>\n\n<i>Режим WHITELIST_BYPASS: любая роль.</i>\n\nВыберите роль:",
         { parse_mode: "HTML", reply_markup: roleSelectKeyboard(uid) },
       );
       return;
@@ -119,7 +474,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     if (policy === "always_switch") {
       ctx.session.role = undefined;
       await ctx.reply(
-        "👋 <b>Мурла — бот заявок</b>\n\nВыберите роль (при каждом /start можно сменить):",
+        "👋 <b>Мурла — бот помощник</b>\n\nВыберите роль (при каждом /start можно сменить):",
         { parse_mode: "HTML", reply_markup: roleSelectKeyboard(uid) },
       );
       return;
@@ -129,30 +484,42 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       const locked = await getLockedRole(uid);
       if (locked) {
         ctx.session.role = locked;
-        await ctx.reply(
-          `👋 <b>Мурла — бот заявок</b>\n\nРоль закреплена: <b>${roleLabel[locked]}</b>.`,
-          { parse_mode: "HTML", reply_markup: mainMenuKeyboard(locked) },
-        );
+        await sendMainMenu(ctx, locked);
         return;
       }
       ctx.session.role = undefined;
       await ctx.reply(
-        "👋 <b>Мурла — бот заявок</b>\n\nПервый вход — выберите роль (потом смена только у администратора БД):",
+        "👋 <b>Мурла — бот помощник</b>\n\nПервый вход — выберите роль (потом смена только у администратора БД):",
         { parse_mode: "HTML", reply_markup: roleSelectKeyboard(uid) },
       );
       return;
     }
 
     ctx.session.role = "client";
-    await ctx.reply(
-      "👋 <b>Мурла — бот заявок</b>\n\nВы вошли как <b>клиент</b>.",
-      { parse_mode: "HTML", reply_markup: mainMenuKeyboard("client") },
-    );
+    await setLastSelectedBotRole(uid, "client");
+    await sendMainMenu(ctx, "client");
   });
 
   bot.command("cancel", async (ctx) => {
     ctx.session.orderDraft = undefined;
+    ctx.session.editingBusinessName = undefined;
     await ctx.reply("Черновик заявки сброшен. /start — меню.");
+  });
+
+  /** Главное меню без лишнего текста в чате: сообщение с командой удаляется после ответа. */
+  bot.command("menu", async (ctx) => {
+    if (ctx.session.role !== "client") {
+      await ctx.reply("Сначала /start и выберите роль «Клиент».");
+      return;
+    }
+    ctx.session.orderDraft = undefined;
+    ctx.session.editingBusinessName = undefined;
+    await sendMainMenu(ctx, "client");
+    try {
+      await ctx.deleteMessage();
+    } catch {
+      // нет прав или клиент не дал удалять сообщения
+    }
   });
 
   bot.callbackQuery(/^role:(.+)$/, async (ctx) => {
@@ -181,8 +548,74 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       await setLockedRole(uid, role);
     }
     ctx.session.role = role;
+    ctx.session.editingBusinessName = undefined;
+    await setLastSelectedBotRole(uid, role);
     await ctx.answerCallbackQuery();
     await sendMainMenu(ctx, role);
+  });
+
+  bot.callbackQuery("reg:accept", async (ctx) => {
+    const uid = ctx.from?.id;
+    if (uid === undefined || ctx.session.role !== "client") {
+      await ctx.answerCallbackQuery({ text: "Сначала выберите роль «Клиент» через /start" });
+      return;
+    }
+    await saveClientConsent(uid, ctx.from?.username);
+    await ctx.answerCallbackQuery({ text: "Шаг 2 — телефон" });
+    if (ctx.callbackQuery.message) {
+      await ctx.editMessageText(
+        "✅ <b>Согласие сохранено.</b>\n\n📱 <b>Шаг 2:</b> подтвердите номер телефона кнопкой ниже в следующем сообщении.",
+        { parse_mode: "HTML" },
+      );
+    }
+    await sendPhoneVerificationPrompt(ctx);
+  });
+
+  bot.callbackQuery("menu:proxy_order", async (ctx) => {
+    if (!ctx.session.role || !isManagerLikeRole(ctx.session.role)) {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    ctx.session.orderDraft = undefined;
+    await ctx.answerCallbackQuery();
+    await showProxyOrderPicker(ctx);
+  });
+
+  bot.callbackQuery("pxc:new", async (ctx) => {
+    if (!ctx.session.role || !isManagerLikeRole(ctx.session.role)) {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    ctx.session.orderDraft = emptyOrderDraft();
+    ctx.session.orderDraft.step = "proxy_client_id";
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      draftMsg(
+        "📎 Введите <b>Telegram user id</b> клиента (целое число). Например, через @userinfobot.",
+        ctx.session.orderDraft,
+      ),
+      { parse_mode: "HTML", reply_markup: kbCancelOnly() },
+    );
+  });
+
+  bot.callbackQuery(/^pxc:(\d+)$/, async (ctx) => {
+    if (!ctx.session.role || !isManagerLikeRole(ctx.session.role)) {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    const id = Number(ctx.match[1]);
+    ctx.session.orderDraft = emptyOrderDraft();
+    ctx.session.orderDraft.proxyClientTelegramId = id;
+    ctx.session.orderDraft.step = "product";
+    await ctx.answerCallbackQuery();
+    const cap = await proxyTargetClientCaptionHtml(id);
+    await ctx.editMessageText(
+      draftMsg(
+        `📝 <b>Шаг 1/7</b>${cap}\n\nКакой у клиента товар?\n\nНапишите одним сообщением.`,
+        ctx.session.orderDraft,
+      ),
+      { parse_mode: "HTML", reply_markup: kbCancelOnly() },
+    );
   });
 
   bot.callbackQuery("menu:back", async (ctx) => {
@@ -192,50 +625,235 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       return;
     }
     ctx.session.orderDraft = undefined;
+    ctx.session.editingBusinessName = undefined;
     await ctx.answerCallbackQuery();
     await sendMainMenu(ctx, role);
   });
 
-  /** ——— Клиент: новая заявка (6 шагов) ——— */
+  /** Навигация назад по шагам черновика заявки */
+  bot.callbackQuery("draft:nav_back", async (ctx) => {
+    const d = ctx.session.orderDraft;
+    if (!d || !canUseOrderDraft(ctx)) {
+      await ctx.answerCallbackQuery({ text: "Нет черновика" });
+      return;
+    }
+    if (!ctx.callbackQuery.message) {
+      await ctx.answerCallbackQuery({ text: "Ошибка" });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    switch (d.step) {
+      case "proxy_client_id":
+        ctx.session.orderDraft = undefined;
+        await showProxyOrderPicker(ctx);
+        return;
+      case "product":
+        if (d.proxyClientTelegramId !== undefined && ctx.session.role && isManagerLikeRole(ctx.session.role)) {
+          ctx.session.orderDraft = undefined;
+          await showProxyOrderPicker(ctx);
+          return;
+        }
+        await ctx.reply("Назад отсюда нельзя — используйте «Отмена» или /cancel.");
+        return;
+      case "quantity":
+        d.step = "product";
+        d.quantityText = "";
+        await ctx.reply(draftMsg("📝 <b>Шаг 1/7</b>\nКакой у вас товар?\n\nНапишите одним сообщением.", d), {
+          parse_mode: "HTML",
+          reply_markup: kbCancelOnly(),
+        });
+        return;
+      case "tz":
+        d.step = "quantity";
+        d.tz = "";
+        await ctx.reply(draftMsg("📝 <b>Шаг 2/7</b>\nКоличество товара (в единицах измерения):", d), {
+          parse_mode: "HTML",
+          reply_markup: kbBackCancel(),
+        });
+        return;
+      case "pickup_decision":
+        d.step = "tz";
+        await ctx.reply(draftMsg("📝 <b>Шаг 3/7</b>\nТЗ (техническое задание / условия):", d), {
+          parse_mode: "HTML",
+          reply_markup: kbBackCancel(),
+        });
+        return;
+      case "pick_address":
+        if (d.pickupPoints.length > 0) {
+          d.step = "pick_after_point";
+          await ctx.editMessageText(draftMsg(MSG_AFTER_PICKUP_ADDED, d), {
+            parse_mode: "HTML",
+            reply_markup: kbPickAfterPoint(),
+          });
+        } else {
+          d.step = "pickup_decision";
+          await ctx.editMessageText(
+            draftMsg("📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?", d),
+            { parse_mode: "HTML", reply_markup: kbPickupDecision() },
+          );
+        }
+        return;
+      case "pick_after_point":
+        if (d.pickupPoints.length > 0) {
+          d.pickupPoints.pop();
+        }
+        if (d.pickupPoints.length === 0) {
+          d.step = "pick_address";
+          await ctx.editMessageText(draftMsg(MSG_PICK_ADDRESS_FIRST, d), {
+            parse_mode: "HTML",
+            reply_markup: kbBackCancel(),
+          });
+        } else {
+          d.step = "pick_after_point";
+          await ctx.editMessageText(draftMsg(MSG_AFTER_PICKUP_ADDED, d), {
+            parse_mode: "HTML",
+            reply_markup: kbPickAfterPoint(),
+          });
+        }
+        return;
+      case "delivery_marketplace":
+        d.deliveryMarketplace = undefined;
+        if (d.needsPickup && d.pickupPoints.length > 0) {
+          d.step = "pick_after_point";
+          await ctx.editMessageText(draftMsg(MSG_AFTER_PICKUP_ADDED, d), {
+            parse_mode: "HTML",
+            reply_markup: kbPickAfterPoint(),
+          });
+        } else {
+          d.step = "pickup_decision";
+          await ctx.editMessageText(
+            draftMsg("📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?", d),
+            { parse_mode: "HTML", reply_markup: kbPickupDecision() },
+          );
+        }
+        return;
+      case "comment":
+        if (!d.delivery) {
+          await ctx.reply("Черновик сброшен. /start");
+          return;
+        }
+        d.step = "desired_delivery_date";
+        d.comment = "";
+        await ctx.editMessageText(draftMsg(MSG_DESIRED_DELIVERY_DATE, d), {
+          parse_mode: "HTML",
+          reply_markup: kbDesiredDate(),
+        });
+        return;
+      case "desired_delivery_date":
+        if (!d.delivery) {
+          await ctx.reply("Черновик сброшен. /start");
+          return;
+        }
+        d.step = "delivery_warehouse";
+        d.desiredDeliveryDate = "";
+        {
+          const mp = d.delivery.marketplace;
+          const list = warehousesByMarketplace(mp);
+          const kb = new InlineKeyboard();
+          for (const w of list) {
+            kb.text(w.label, `dw:${w.id}`).row();
+          }
+          kb.text("« Назад", "draft:dm_back").row();
+          kb.text("« Отмена", "menu:back");
+          await ctx.editMessageText(
+            draftMsg(`📍 <b>Куда везти — ${MARKETPLACE_LABEL[mp]}</b>\nВыберите склад назначения:`, d),
+            { parse_mode: "HTML", reply_markup: kb },
+          );
+        }
+        return;
+      case "confirm":
+        d.step = "comment";
+        await ctx.editMessageText(
+          draftMsg(
+            "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
+            d,
+          ),
+          {
+            parse_mode: "HTML",
+            reply_markup: new InlineKeyboard()
+              .text("Пропустить комментарий", "skip:comment")
+              .row()
+              .text("« Назад", "draft:nav_back")
+              .row()
+              .text("« Отмена", "menu:back"),
+          },
+        );
+        return;
+      default:
+        await ctx.reply("Назад отсюда нельзя — используйте «Отмена» или /cancel.");
+    }
+  });
+
+  /** ——— Клиент: новая заявка (7 шагов) ——— */
   bot.callbackQuery("menu:new_order", async (ctx) => {
     if (ctx.session.role !== "client") {
       await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
     }
+    const uid = ctx.from?.id;
+    if (uid === undefined || !(await isClientRegistered(uid))) {
+      await ctx.answerCallbackQuery({ text: "Сначала примите условия" });
+      await sendMainMenu(ctx, "client");
+      return;
+    }
     ctx.session.orderDraft = emptyOrderDraft();
     ctx.session.orderDraft.step = "product";
+    ctx.session.editingBusinessName = undefined;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      "📝 <b>Шаг 1/6</b>\nКакой у вас товар?\n\nНапишите одним сообщением.",
-      { parse_mode: "HTML" },
+      draftMsg(
+        "📝 <b>Шаг 1/7</b>\nКакой у вас товар?\n\nНапишите одним сообщением.",
+        ctx.session.orderDraft,
+      ),
+      { parse_mode: "HTML", reply_markup: kbCancelOnly() },
     );
+  });
+
+  bot.callbackQuery("menu:edit_business", async (ctx) => {
+    if (ctx.session.role !== "client") {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    const uid = ctx.from?.id;
+    if (uid === undefined || !(await isClientRegistered(uid))) {
+      await ctx.answerCallbackQuery({ text: "Сначала завершите регистрацию" });
+      await sendMainMenu(ctx, "client");
+      return;
+    }
+    ctx.session.orderDraft = undefined;
+    ctx.session.editingBusinessName = true;
+    await ctx.answerCallbackQuery();
+    const kb = new InlineKeyboard().text("« Меню", "menu:back");
+    const prompt =
+      "✏️ <b>Название ИП / магазина</b>\n\n" +
+      "Напишите одним сообщением, как показывать вас в списках заявок (то же поле, что при регистрации).\n\n" +
+      "Минимум 2 символа, максимум 200.";
+    if (ctx.callbackQuery.message) {
+      await ctx.editMessageText(prompt, { parse_mode: "HTML", reply_markup: kb });
+    } else {
+      await ctx.reply(prompt, { parse_mode: "HTML", reply_markup: kb });
+    }
   });
 
   bot.callbackQuery("pickup:y", async (ctx) => {
     const d = ctx.session.orderDraft;
-    if (!d || d.step !== "pickup_decision") {
+    if (!d || !canUseOrderDraft(ctx) || d.step !== "pickup_decision") {
       await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
       return;
     }
     d.needsPickup = true;
     d.pickupPoints = [];
-    d.step = "pick_marketplace";
-    d.pickupMarketplace = undefined;
+    d.step = "pick_address";
     await ctx.answerCallbackQuery();
-    const kb = new InlineKeyboard();
-    for (const m of MARKETPLACES) {
-      kb.text(MARKETPLACE_LABEL[m], `pm:${m}`).row();
-    }
-    kb.text("« Отмена", "menu:back");
-    await ctx.editMessageText(
-      "📍 <b>Шаг 4/6 — забор товара</b>\nВыберите маркетплейс для <b>точки забора</b>:",
-      { parse_mode: "HTML", reply_markup: kb },
-    );
+    await ctx.editMessageText(draftMsg(MSG_PICK_ADDRESS_FIRST, d), {
+      parse_mode: "HTML",
+      reply_markup: kbBackCancel(),
+    });
   });
 
   bot.callbackQuery("pickup:n", async (ctx) => {
     const d = ctx.session.orderDraft;
-    if (!d || d.step !== "pickup_decision") {
+    if (!d || !canUseOrderDraft(ctx) || d.step !== "pickup_decision") {
       await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
       return;
     }
@@ -248,104 +866,33 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     for (const m of MARKETPLACES) {
       kb.text(MARKETPLACE_LABEL[m], `dm:${m}`).row();
     }
-    kb.text("« Отмена", "menu:back");
+    kbDeliveryMarketplaceFooter(kb);
     await ctx.editMessageText(
-      "🚚 <b>Шаг 5/6</b>\nВыберите маркетплейс, <b>куда нужно отвезти</b> товар:",
-      { parse_mode: "HTML", reply_markup: kb },
-    );
-  });
-
-  bot.callbackQuery(/^pm:(wb|ozon)$/, async (ctx) => {
-    const d = ctx.session.orderDraft;
-    if (!d || d.step !== "pick_marketplace") {
-      await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
-      return;
-    }
-    const mp = ctx.match[1] as MarketplaceId;
-    d.pickupMarketplace = mp;
-    d.step = "pick_warehouse";
-    await ctx.answerCallbackQuery();
-    const list = warehousesByMarketplace(mp);
-    const kb = new InlineKeyboard();
-    for (const w of list) {
-      kb.text(w.label, `pw:${w.id}`).row();
-    }
-    kb.text("« Назад", "draft:pm_back").row();
-    kb.text("« Отмена", "menu:back");
-    await ctx.editMessageText(
-      `📍 <b>Склад забора ${MARKETPLACE_LABEL[mp]}</b>\nВыберите точку:`,
-      { parse_mode: "HTML", reply_markup: kb },
-    );
-  });
-
-  bot.callbackQuery("draft:pm_back", async (ctx) => {
-    const d = ctx.session.orderDraft;
-    if (!d) {
-      await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
-      return;
-    }
-    d.step = "pick_marketplace";
-    d.pickupMarketplace = undefined;
-    await ctx.answerCallbackQuery();
-    const kb = new InlineKeyboard();
-    for (const m of MARKETPLACES) {
-      kb.text(MARKETPLACE_LABEL[m], `pm:${m}`).row();
-    }
-    kb.text("« Отмена", "menu:back");
-    await ctx.editMessageText(
-      "📍 Выберите маркетплейс для точки забора:",
-      { reply_markup: kb },
-    );
-  });
-
-  bot.callbackQuery(/^pw:(.+)$/, async (ctx) => {
-    const d = ctx.session.orderDraft;
-    if (!d || d.step !== "pick_warehouse" || !d.pickupMarketplace) {
-      await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
-      return;
-    }
-    const wid = ctx.match[1];
-    if (!findWarehouseById(wid)) {
-      await ctx.answerCallbackQuery({ text: "Неизвестный склад" });
-      return;
-    }
-    d.pickupPoints.push({ marketplace: d.pickupMarketplace, warehouseId: wid });
-    d.step = "pick_after_point";
-    await ctx.answerCallbackQuery();
-    const kb = new InlineKeyboard()
-      .text("➕ Ещё точка забора", "pmore:y")
-      .row()
-      .text("➡️ Дальше (куда везти)", "pmore:n")
-      .row()
-      .text("« Отмена", "menu:back");
-    await ctx.editMessageText(
-      `✅ Точка добавлена.\n\nДобавить ещё одну точку забора или перейти к выбору <b>места доставки</b>?`,
+      draftMsg(
+        "🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс, <b>куда нужно отвезти</b> товар:",
+        d,
+      ),
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
 
   bot.callbackQuery("pmore:y", async (ctx) => {
     const d = ctx.session.orderDraft;
-    if (!d || d.step !== "pick_after_point") {
+    if (!d || !canUseOrderDraft(ctx) || d.step !== "pick_after_point") {
       await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
       return;
     }
-    d.step = "pick_marketplace";
-    d.pickupMarketplace = undefined;
+    d.step = "pick_address";
     await ctx.answerCallbackQuery();
-    const kb = new InlineKeyboard();
-    for (const m of MARKETPLACES) {
-      kb.text(MARKETPLACE_LABEL[m], `pm:${m}`).row();
-    }
-    kb.text("« Отмена", "menu:back");
-    await ctx.editMessageText("Выберите маркетплейс для следующей точки забора:", {
-      reply_markup: kb,
+    await ctx.editMessageText(draftMsg(MSG_PICK_ADDRESS_NEXT, d), {
+      parse_mode: "HTML",
+      reply_markup: kbBackCancel(),
     });
   });
 
   bot.callbackQuery("pmore:n", async (ctx) => {
     const d = ctx.session.orderDraft;
-    if (!d || d.step !== "pick_after_point") {
+    if (!d || !canUseOrderDraft(ctx) || d.step !== "pick_after_point") {
       await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
       return;
     }
@@ -360,16 +907,16 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     for (const m of MARKETPLACES) {
       kb.text(MARKETPLACE_LABEL[m], `dm:${m}`).row();
     }
-    kb.text("« Отмена", "menu:back");
+    kbDeliveryMarketplaceFooter(kb);
     await ctx.editMessageText(
-      "🚚 <b>Шаг 5/6</b>\nВыберите маркетплейс, <b>куда отвезти</b> товар:",
+      draftMsg("🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс, <b>куда отвезти</b> товар:", d),
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
 
   bot.callbackQuery(/^dm:(wb|ozon)$/, async (ctx) => {
     const d = ctx.session.orderDraft;
-    if (!d || d.step !== "delivery_marketplace") {
+    if (!d || !canUseOrderDraft(ctx) || d.step !== "delivery_marketplace") {
       await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
       return;
     }
@@ -385,14 +932,14 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     kb.text("« Назад", "draft:dm_back").row();
     kb.text("« Отмена", "menu:back");
     await ctx.editMessageText(
-      `📍 <b>Куда везти — ${MARKETPLACE_LABEL[mp]}</b>\nВыберите склад назначения:`,
+      draftMsg(`📍 <b>Куда везти — ${MARKETPLACE_LABEL[mp]}</b>\nВыберите склад назначения:`, d),
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
 
   bot.callbackQuery("draft:dm_back", async (ctx) => {
     const d = ctx.session.orderDraft;
-    if (!d) {
+    if (!d || !canUseOrderDraft(ctx)) {
       await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
       return;
     }
@@ -403,15 +950,16 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     for (const m of MARKETPLACES) {
       kb.text(MARKETPLACE_LABEL[m], `dm:${m}`).row();
     }
-    kb.text("« Отмена", "menu:back");
-    await ctx.editMessageText("🚚 Выберите маркетплейс для доставки:", {
+    kbDeliveryMarketplaceFooter(kb);
+    await ctx.editMessageText(draftMsg("🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс для доставки:", d), {
+      parse_mode: "HTML",
       reply_markup: kb,
     });
   });
 
   bot.callbackQuery(/^dw:(.+)$/, async (ctx) => {
     const d = ctx.session.orderDraft;
-    if (!d || d.step !== "delivery_warehouse" || !d.deliveryMarketplace) {
+    if (!d || !canUseOrderDraft(ctx) || d.step !== "delivery_warehouse" || !d.deliveryMarketplace) {
       await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
       return;
     }
@@ -421,40 +969,56 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       return;
     }
     d.delivery = { marketplace: d.deliveryMarketplace, warehouseId: wid };
+    d.step = "desired_delivery_date";
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(draftMsg(MSG_DESIRED_DELIVERY_DATE, d), {
+      parse_mode: "HTML",
+      reply_markup: kbDesiredDate(),
+    });
+  });
+
+  bot.callbackQuery("skip:desired_date", async (ctx) => {
+    const d = ctx.session.orderDraft;
+    if (!d || !canUseOrderDraft(ctx) || d.step !== "desired_delivery_date") {
+      await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
+      return;
+    }
+    d.desiredDeliveryDate = "";
     d.step = "comment";
     await ctx.answerCallbackQuery();
     const kb = new InlineKeyboard()
       .text("Пропустить комментарий", "skip:comment")
       .row()
+      .text("« Назад", "draft:nav_back")
+      .row()
       .text("« Отмена", "menu:back");
     await ctx.editMessageText(
-      "💬 <b>Шаг 6/6</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
+      draftMsg(
+        "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
+        d,
+      ),
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
 
   bot.callbackQuery("skip:comment", async (ctx) => {
     const d = ctx.session.orderDraft;
-    if (!d || d.step !== "comment") {
+    if (!d || !canUseOrderDraft(ctx) || d.step !== "comment") {
       await ctx.answerCallbackQuery({ text: "Сессия сброшена" });
       return;
     }
     d.comment = "";
     d.step = "confirm";
     await ctx.answerCallbackQuery();
-    const kb = new InlineKeyboard()
-      .text("✅ Создать черновик", "draft:create")
-      .row()
-      .text("« Отмена", "menu:back");
     await ctx.editMessageText(
-      `${formatDraftSummaryHtml(d)}\n\nПодтвердите создание черновика заявки.`,
-      { parse_mode: "HTML", reply_markup: kb },
+      draftMsg(`${formatDraftSummaryHtml(d)}\n\nПодтвердите создание черновика заявки.`, d),
+      { parse_mode: "HTML", reply_markup: kbConfirmDraft() },
     );
   });
 
   bot.callbackQuery("draft:create", async (ctx) => {
     const uid = ctx.from?.id;
-    if (uid === undefined || ctx.session.role !== "client") {
+    if (uid === undefined || !canFinalizeDraft(ctx)) {
       await ctx.answerCallbackQuery({ text: "Ошибка" });
       return;
     }
@@ -467,27 +1031,98 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       await ctx.answerCallbackQuery({ text: "Укажите точки забора" });
       return;
     }
-    const order = await orderStore.create({
-      clientTelegramId: uid,
-      clientUsername: ctx.from.username,
-      product: d.product.trim(),
-      quantityText: d.quantityText.trim(),
-      tz: d.tz.trim(),
-      needsPickup: d.needsPickup ?? false,
-      pickupPoints: d.needsPickup ? [...d.pickupPoints] : [],
-      delivery: d.delivery,
-      comment: d.comment.trim() || undefined,
-    });
+    /** Сразу снимаем черновик из сессии, чтобы повторный колбэк (двойной тап) не создал вторую заявку. */
+    const draftSnapshot = d;
     ctx.session.orderDraft = undefined;
+
+    const isProxy = draftSnapshot.proxyClientTelegramId !== undefined;
+    const clientTelegramId = isProxy ? draftSnapshot.proxyClientTelegramId! : uid;
+    const clientUsername = isProxy
+      ? (await getClientUsername(clientTelegramId)) ?? undefined
+      : ctx.from?.username;
+    const createdByTelegramId = isProxy ? uid : undefined;
+
+    let order: FulfillmentOrder;
+    try {
+      order = await orderStore.create({
+        clientTelegramId,
+        clientUsername,
+        createdByTelegramId,
+        product: draftSnapshot.product.trim(),
+        quantityText: draftSnapshot.quantityText.trim(),
+        tz: draftSnapshot.tz.trim(),
+        needsPickup: draftSnapshot.needsPickup ?? false,
+        pickupPoints: draftSnapshot.needsPickup ? [...draftSnapshot.pickupPoints] : [],
+        delivery: draftSnapshot.delivery!,
+        desiredDeliveryDate: draftSnapshot.desiredDeliveryDate.trim() || undefined,
+        comment: draftSnapshot.comment.trim() || undefined,
+      });
+    } catch (err) {
+      console.error("draft:create orderStore.create", err);
+      ctx.session.orderDraft = draftSnapshot;
+      await ctx.answerCallbackQuery({ text: "Не удалось сохранить. Попробуйте ещё раз." });
+      return;
+    }
+
     await ctx.answerCallbackQuery();
     await notifyOnStatusChange(ctx.api, order, "draft");
-    const kb = new InlineKeyboard().text("📤 Отправить в работу", `o:${order.id}:send`);
-    await ctx.editMessageText(
-      `✅ <b>Черновик №${order.id}</b> создан.\n\n` +
-        formatOrderHtml(order) +
-        "\n\nНажмите «Отправить в работу», чтобы статус стал «Принято в работу».",
-      { parse_mode: "HTML", reply_markup: kb },
-    );
+
+    if (createdByTelegramId && (await isClientRegistered(clientTelegramId))) {
+      try {
+        await ctx.api.sendMessage(
+          clientTelegramId,
+          `📋 <b>Новый черновик заявки №${order.id}</b>\n\n` +
+            `Для вас оформили черновик. Откройте «Черновики» в меню бота и при необходимости отправьте заявку в работу.\n\n` +
+            formatOrderHtml(order),
+          { parse_mode: "HTML" },
+        );
+      } catch (e) {
+        console.error("notify client on proxy draft", e);
+      }
+    }
+
+    const kb = new InlineKeyboard();
+    if (!isProxy) {
+      kb.text("📤 Отправить в работу", `o:${order.id}:send`).row();
+    }
+    kb.text("« Меню", "menu:back");
+    const tail = isProxy
+      ? "\n\n<i>Клиент увидит черновик у себя и сможет отправить его в работу.</i>"
+      : "\n\nНажмите «Отправить в работу», чтобы статус стал «Принято в работу».";
+    await ctx.editMessageText(`✅ <b>Черновик №${order.id}</b> создан.\n\n` + formatOrderHtml(order) + tail, {
+      parse_mode: "HTML",
+      reply_markup: kb,
+    });
+  });
+
+  bot.callbackQuery(/^o:(\d+):deldraft$/, async (ctx) => {
+    if (ctx.session.role !== "client") {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    const uid = ctx.from?.id;
+    if (uid === undefined) {
+      return;
+    }
+    const id = ctx.match[1];
+    const o = await orderStore.get(id);
+    if (!o || o.clientTelegramId !== uid) {
+      await ctx.answerCallbackQuery({ text: "Заявка не найдена" });
+      return;
+    }
+    if (o.status !== "draft") {
+      await ctx.answerCallbackQuery({ text: "Можно удалить только черновик" });
+      return;
+    }
+    await orderStore.delete(id);
+    setClientListMode(ctx, "drafts");
+    await ctx.answerCallbackQuery({ text: "Удалено" });
+    await ctx.editMessageText(`🗑 Черновик №${id} удалён.`, {
+      reply_markup: new InlineKeyboard()
+        .text("📄 Черновики", "menu:my_drafts")
+        .row()
+        .text("« Меню", "menu:back"),
+    });
   });
 
   bot.callbackQuery(/^o:(\d+):send$/, async (ctx) => {
@@ -513,7 +1148,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     await notifyOnStatusChange(ctx.api, next, "accepted");
     await ctx.editMessageText(
       `✅ Заявка №${id} принята в работу.\n\n` + formatOrderHtml(next),
-      { parse_mode: "HTML" },
+      { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("« Меню", "menu:back") },
     );
   });
 
@@ -527,27 +1162,105 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       return;
     }
     await ctx.answerCallbackQuery();
+    setClientListMode(ctx, "all");
     const list = await orderStore.listByClient(uid);
     if (!list.length) {
       await ctx.editMessageText("Заявок пока нет.", {
-        reply_markup: new InlineKeyboard().text("« Меню", "menu:back"),
+        reply_markup: new InlineKeyboard()
+          .text("➕ Новая заявка", "menu:new_order")
+          .row()
+          .text("« Меню", "menu:back"),
       });
       return;
     }
+    const myName = await getClientDisplayNameForOrderList(uid);
     const kb = new InlineKeyboard();
-    for (const o of list.slice(0, 20)) {
-      kb.text(`№${o.id} — ${ORDER_STATUS_LABEL[o.status]}`, `v:${o.id}`).row();
-    }
+    list.slice(0, 20).forEach((o, i) => {
+      kb.text(orderListButtonLabel(myName, i, ORDER_STATUS_LABEL[o.status]), `v:${o.id}`).row();
+    });
     kb.text("« Меню", "menu:back");
-    await ctx.editMessageText("Ваши заявки:", { reply_markup: kb });
+    await ctx.editMessageText("📋 <b>Все заявки</b> (включая завершённые):", {
+      parse_mode: "HTML",
+      reply_markup: kb,
+    });
   });
 
-  /** ——— Упаковщик ——— */
+  bot.callbackQuery("menu:my_drafts", async (ctx) => {
+    if (ctx.session.role !== "client") {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    const uid = ctx.from?.id;
+    if (uid === undefined) {
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    setClientListMode(ctx, "drafts");
+    const list = (await orderStore.listByClient(uid)).filter((o) => o.status === "draft");
+    if (!list.length) {
+      await ctx.editMessageText(
+        "Черновиков нет. Создайте заявку и нажмите «Создать черновик» в конце мастера — она появится здесь, пока не отправите её в работу.",
+        {
+          reply_markup: new InlineKeyboard()
+            .text("➕ Новая заявка", "menu:new_order")
+            .row()
+            .text("« Меню", "menu:back"),
+        },
+      );
+      return;
+    }
+    const myName = await getClientDisplayNameForOrderList(uid);
+    const kb = new InlineKeyboard();
+    list.slice(0, 20).forEach((o, i) => {
+      kb.text(orderListButtonLabel(myName, i, ORDER_STATUS_LABEL[o.status]), `v:${o.id}`).row();
+    });
+    kb.text("« Меню", "menu:back");
+    await ctx.editMessageText(
+      "📄 <b>Черновики</b> — не отправлены в работу. Откройте заявку, чтобы отправить или удалить.",
+      { parse_mode: "HTML", reply_markup: kb },
+    );
+  });
+
+  bot.callbackQuery("menu:my_active", async (ctx) => {
+    if (ctx.session.role !== "client") {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    const uid = ctx.from?.id;
+    if (uid === undefined) {
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    setClientListMode(ctx, "active");
+    const list = (await orderStore.listByClient(uid)).filter(isActiveClientOrder);
+    if (!list.length) {
+      await ctx.editMessageText("Активных заявок нет (нет заявок в работе между черновиком и завершением).", {
+        reply_markup: new InlineKeyboard()
+          .text("📋 Все заявки", "menu:my_orders")
+          .row()
+          .text("« Меню", "menu:back"),
+      });
+      return;
+    }
+    const myName = await getClientDisplayNameForOrderList(uid);
+    const kb = new InlineKeyboard();
+    list.slice(0, 20).forEach((o, i) => {
+      kb.text(orderListButtonLabel(myName, i, ORDER_STATUS_LABEL[o.status]), `v:${o.id}`).row();
+    });
+    kb.text("« Меню", "menu:back");
+    await ctx.editMessageText(
+      "🔄 <b>Активные заявки</b> — в работе (не черновик, не завершено, не отменено).",
+      { parse_mode: "HTML", reply_markup: kb },
+    );
+  });
+
+  /** ——— Работник склада ——— */
   bot.callbackQuery("menu:packer_orders", async (ctx) => {
     if (ctx.session.role !== "packer") {
       await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
     }
+    ctx.session.packerListSource = "active";
     await ctx.answerCallbackQuery();
     const active = (await orderStore.list()).filter(
       (o) =>
@@ -559,21 +1272,59 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     );
     if (!active.length) {
       await ctx.editMessageText("Нет заявок для обработки.", {
-        reply_markup: new InlineKeyboard().text("« Меню", "menu:back"),
+        reply_markup: new InlineKeyboard()
+          .text("📁 Архив выполненных", "menu:packer_archive")
+          .row()
+          .text("« Меню", "menu:back"),
       });
       return;
     }
+    const slice = active.slice(0, 20);
+    const names = await getBusinessNamesForTelegramIds(slice.map((o) => o.clientTelegramId));
     const kb = new InlineKeyboard();
-    for (const o of active.slice(0, 20)) {
-      kb.text(`№${o.id} — ${ORDER_STATUS_LABEL[o.status]}`, `v:${o.id}`).row();
-    }
+    slice.forEach((o, i) => {
+      const bn = names.get(o.clientTelegramId) ?? `Клиент ${o.clientTelegramId}`;
+      kb.text(orderListButtonLabel(bn, i, ORDER_STATUS_LABEL[o.status]), `v:${o.id}`).row();
+    });
     kb.text("« Меню", "menu:back");
-    await ctx.editMessageText("Заявки на складе:", { reply_markup: kb });
+    await ctx.editMessageText("📦 <b>Заявки</b>", { parse_mode: "HTML", reply_markup: kb });
+  });
+
+  bot.callbackQuery("menu:packer_archive", async (ctx) => {
+    if (ctx.session.role !== "packer") {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    ctx.session.packerListSource = "archive";
+    await ctx.answerCallbackQuery();
+    const done = sortOrdersByUpdatedDesc(
+      (await orderStore.list()).filter((o) => o.status === "done"),
+    ).slice(0, 20);
+    if (!done.length) {
+      await ctx.editMessageText("В архиве пока нет выполненных заявок.", {
+        reply_markup: new InlineKeyboard()
+          .text("📦 Заявки", "menu:packer_orders")
+          .row()
+          .text("« Меню", "menu:back"),
+      });
+      return;
+    }
+    const names = await getBusinessNamesForTelegramIds(done.map((o) => o.clientTelegramId));
+    const kb = new InlineKeyboard();
+    done.forEach((o, i) => {
+      const bn = names.get(o.clientTelegramId) ?? `Клиент ${o.clientTelegramId}`;
+      kb.text(orderListButtonLabel(bn, i, ORDER_STATUS_LABEL[o.status]), `v:${o.id}`).row();
+    });
+    kb.text("« Меню", "menu:back");
+    await ctx.editMessageText("📁 <b>Архив — выполненные заявки</b>", {
+      parse_mode: "HTML",
+      reply_markup: kb,
+    });
   });
 
   /** ——— Менеджер / управляющий ——— */
   bot.callbackQuery("menu:all_orders", async (ctx) => {
-    if (ctx.session.role !== "manager" && ctx.session.role !== "supervisor") {
+    if (!ctx.session.role || !isManagerLikeRole(ctx.session.role)) {
       await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
     }
@@ -585,16 +1336,19 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       });
       return;
     }
+    const slice = list.slice(0, 20);
+    const names = await getBusinessNamesForTelegramIds(slice.map((o) => o.clientTelegramId));
     const kb = new InlineKeyboard();
-    for (const o of list.slice(0, 20)) {
-      kb.text(`№${o.id} — ${ORDER_STATUS_LABEL[o.status]}`, `v:${o.id}`).row();
-    }
+    slice.forEach((o, i) => {
+      const bn = names.get(o.clientTelegramId) ?? `Клиент ${o.clientTelegramId}`;
+      kb.text(orderListButtonLabel(bn, i, ORDER_STATUS_LABEL[o.status]), `v:${o.id}`).row();
+    });
     kb.text("« Меню", "menu:back");
     await ctx.editMessageText("Все заявки:", { reply_markup: kb });
   });
 
   bot.callbackQuery("menu:report", async (ctx) => {
-    if (ctx.session.role !== "manager" && ctx.session.role !== "supervisor") {
+    if (!ctx.session.role || !isManagerLikeRole(ctx.session.role)) {
       await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
     }
@@ -621,6 +1375,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
     }
+    ctx.session.driverListSource = "active";
     await ctx.answerCallbackQuery();
     const list = (await orderStore.list()).filter(
       (o) =>
@@ -629,18 +1384,56 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         o.status === "in_transit",
     );
     if (!list.length) {
-      await ctx.editMessageText("Нет активных задач.", {
-        reply_markup: new InlineKeyboard().text("« Меню", "menu:back"),
+      await ctx.editMessageText("Нет активных заявок.", {
+        reply_markup: new InlineKeyboard()
+          .text("📁 Архив выполненных", "menu:driver_archive")
+          .row()
+          .text("« Меню", "menu:back"),
       });
       return;
     }
+    const slice = sortOrdersByUpdatedDesc(list).slice(0, 20);
+    const names = await getBusinessNamesForTelegramIds(slice.map((o) => o.clientTelegramId));
     const kb = new InlineKeyboard();
-    for (const o of list.slice(0, 20)) {
+    slice.forEach((o, i) => {
+      const bn = names.get(o.clientTelegramId) ?? `Клиент ${o.clientTelegramId}`;
       const tag = o.driverUnloadPending ? "⏳ подтвердить" : ORDER_STATUS_LABEL[o.status];
-      kb.text(`№${o.id} — ${tag}`, `vd:${o.id}`).row();
-    }
+      kb.text(orderListButtonLabel(bn, i, tag), `vd:${o.id}`).row();
+    });
     kb.text("« Меню", "menu:back");
-    await ctx.editMessageText("Задачи водителя:", { reply_markup: kb });
+    await ctx.editMessageText("🚚 <b>Заявки</b>", { parse_mode: "HTML", reply_markup: kb });
+  });
+
+  bot.callbackQuery("menu:driver_archive", async (ctx) => {
+    if (ctx.session.role !== "driver") {
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
+      return;
+    }
+    ctx.session.driverListSource = "archive";
+    await ctx.answerCallbackQuery();
+    const done = sortOrdersByUpdatedDesc(
+      (await orderStore.list()).filter((o) => o.status === "done"),
+    ).slice(0, 20);
+    if (!done.length) {
+      await ctx.editMessageText("В архиве пока нет выполненных заявок.", {
+        reply_markup: new InlineKeyboard()
+          .text("🚚 Заявки", "menu:driver_orders")
+          .row()
+          .text("« Меню", "menu:back"),
+      });
+      return;
+    }
+    const names = await getBusinessNamesForTelegramIds(done.map((o) => o.clientTelegramId));
+    const kb = new InlineKeyboard();
+    done.forEach((o, i) => {
+      const bn = names.get(o.clientTelegramId) ?? `Клиент ${o.clientTelegramId}`;
+      kb.text(orderListButtonLabel(bn, i, ORDER_STATUS_LABEL[o.status]), `vd:${o.id}`).row();
+    });
+    kb.text("« Меню", "menu:back");
+    await ctx.editMessageText("📁 <b>Архив — выполненные заявки</b>", {
+      parse_mode: "HTML",
+      reply_markup: kb,
+    });
   });
 
   bot.callbackQuery(/^vd:(\d+)$/, async (ctx) => {
@@ -655,24 +1448,13 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       return;
     }
     await ctx.answerCallbackQuery();
-    const kb = new InlineKeyboard();
-    if (o.driverUnloadPending) {
-      kb.text("✅ Подтвердить готовность к выгрузке", `o:${id}:dvc`).row();
-    }
-    if (o.status === "ready_for_unload") {
-      kb.text("🚛 В пути", `o:${id}:dvt`).row();
-    }
-    if (o.status === "in_transit") {
-      kb.text("✔️ Завершено", `o:${id}:dvf`).row();
-    }
-    kb.text("« Меню", "menu:back");
     await ctx.editMessageText(
       `<b>Водитель — заявка №${id}</b>\n\n` + formatOrderHtml(o),
-      { parse_mode: "HTML", reply_markup: kb },
+      { parse_mode: "HTML", reply_markup: driverOrderDetailKeyboard(ctx, id, o) },
     );
   });
 
-  /** Упаковщик / водитель: действия по заявке */
+  /** Работник склада / водитель: действия по заявке */
   bot.callbackQuery(/^o:(\d+):(pkr|drv|dvc|dvt|dvf)$/, async (ctx) => {
     const id = ctx.match[1];
     const act = ctx.match[2];
@@ -684,30 +1466,38 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
 
     if (act === "pkr") {
       if (ctx.session.role !== "packer") {
-        await ctx.answerCallbackQuery({ text: "Только упаковщик" });
+        await ctx.answerCallbackQuery({ text: "Только работник склада" });
         return;
       }
       if (o.status === "prep_unload" && o.driverUnloadPending) {
         await ctx.answerCallbackQuery({ text: "Ждём подтверждения водителя" });
         return;
       }
-      if (o.status === "prep_unload") {
-        await orderStore.setDriverUnloadPending(id, true);
-        const updated = await orderStore.get(id);
+
+      const handoffToDriver =
+        o.status === "pack_sort" || (o.status === "prep_unload" && !o.driverUnloadPending);
+
+      if (handoffToDriver) {
+        await orderStore.update(id, { driverUnloadPending: false });
+        const updated = await orderStore.setStatus(id, "ready_for_unload");
         if (updated) {
-          await notifyDriverUnloadRequest(ctx.api, updated, ROLE_WHITELIST.driver);
+          await notifyDriversWarehouseHandoff(ctx.api, updated, ROLE_WHITELIST.driver);
         }
-        await ctx.answerCallbackQuery({ text: "Водитель уведомлён" });
+        await ctx.answerCallbackQuery({ text: "Передано водителю" });
         const after = await orderStore.get(id);
         await ctx.editMessageText(
-          `Запрос водителю отправлен по заявке №${id}.\n\n` + formatOrderHtml(after!),
-          { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("« Меню", "menu:back") },
+          `✅ Заявка №${id} передана водителю. У вас она снята со списка.\n\n` + formatOrderHtml(after!),
+          {
+            parse_mode: "HTML",
+            reply_markup: packerOrderDetailKeyboard(ctx, id, after!),
+          },
         );
         return;
       }
-      const nextSt = packerNextStatus[o.status];
+
+      const nextSt = PACKER_WAREHOUSE_LINEAR[o.status];
       if (!nextSt) {
-        await ctx.answerCallbackQuery({ text: "Нельзя перевести дальше" });
+        await ctx.answerCallbackQuery({ text: "Недоступно для этого статуса" });
         return;
       }
       const updated = await orderStore.setStatus(id, nextSt);
@@ -718,13 +1508,16 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       const afterStatus = await orderStore.get(id);
       await ctx.editMessageText(
         `Заявка №${id} → ${ORDER_STATUS_LABEL[nextSt]}\n\n` + formatOrderHtml(afterStatus!),
-        { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("« Меню", "menu:back") },
+        {
+          parse_mode: "HTML",
+          reply_markup: packerOrderDetailKeyboard(ctx, id, afterStatus!),
+        },
       );
       return;
     }
 
     if (act === "drv") {
-      await ctx.answerCallbackQuery({ text: "Используйте кнопку на этапе prep_unload" });
+      await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
     }
 
@@ -738,15 +1531,15 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         return;
       }
       await orderStore.update(id, { driverUnloadPending: false });
-      const ready = await orderStore.setStatus(id, "ready_for_unload");
-      if (ready) {
-        await notifyOnStatusChange(ctx.api, ready, "ready_for_unload");
-      }
+      await orderStore.setStatus(id, "ready_for_unload");
       await ctx.answerCallbackQuery({ text: "Подтверждено" });
       const afterDvc = await orderStore.get(id);
       await ctx.editMessageText(
-        `Статус: ${ORDER_STATUS_LABEL.ready_for_unload}\n\n` + formatOrderHtml(afterDvc!),
-        { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("« Меню", "menu:back") },
+        `<b>Водитель — заявка №${id}</b>\n\n` + formatOrderHtml(afterDvc!),
+        {
+          parse_mode: "HTML",
+          reply_markup: driverOrderDetailKeyboard(ctx, id, afterDvc!),
+        },
       );
       return;
     }
@@ -767,8 +1560,11 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       await ctx.answerCallbackQuery();
       const afterDvt = await orderStore.get(id);
       await ctx.editMessageText(
-        `В пути — заявка №${id}\n\n` + formatOrderHtml(afterDvt!),
-        { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("« Меню", "menu:back") },
+        `<b>Водитель — заявка №${id}</b>\n\n` + formatOrderHtml(afterDvt!),
+        {
+          parse_mode: "HTML",
+          reply_markup: driverOrderDetailKeyboard(ctx, id, afterDvt!),
+        },
       );
       return;
     }
@@ -787,15 +1583,19 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         await notifyOnStatusChange(ctx.api, updated, "done");
       }
       await ctx.answerCallbackQuery();
+      const afterDvf = await orderStore.get(id);
       await ctx.editMessageText(
-        `Завершено — заявка №${id}`,
-        { reply_markup: new InlineKeyboard().text("« Меню", "menu:back") },
+        `<b>Водитель — заявка №${id}</b>\n\n` + formatOrderHtml(afterDvf!),
+        {
+          parse_mode: "HTML",
+          reply_markup: driverOrderDetailKeyboard(ctx, id, afterDvf!),
+        },
       );
       return;
     }
   });
 
-  /** Просмотр заявки (клиент / упаковщик / менеджер / управляющий) */
+  /** Просмотр заявки (клиент / работник склада / менеджер / управляющий) */
   bot.callbackQuery(/^v:(\d+)$/, async (ctx) => {
     const id = ctx.match[1];
     const o = await orderStore.get(id);
@@ -818,16 +1618,22 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     }
     await ctx.answerCallbackQuery();
     const kb = new InlineKeyboard();
-    if (role === "packer") {
-      if (o.status === "prep_unload" && !o.driverUnloadPending) {
-        kb.text("🚚 Запросить выгрузку у водителя", `o:${id}:pkr`).row();
-      } else if (o.status !== "prep_unload" && packerNextStatus[o.status]) {
-        kb.text("➡️ Следующий этап", `o:${id}:pkr`).row();
-      } else if (o.status === "prep_unload" && o.driverUnloadPending) {
-        kb.text("⏳ Ждём водителя", "noop:0").row();
+    if (role === "client") {
+      if (o.status === "draft") {
+        kb.text("📤 Отправить в работу", `o:${id}:send`).row();
+        kb.text("🗑 Удалить черновик", `o:${id}:deldraft`).row();
       }
     }
-    kb.text("« Назад", "menu:back");
+    if (role === "packer") {
+      await ctx.editMessageText(formatOrderHtml(o), {
+        parse_mode: "HTML",
+        reply_markup: packerOrderDetailKeyboard(ctx, id, o),
+      });
+      return;
+    }
+    const listCb = role === "client" ? clientOrdersListCallback(ctx) : ordersListCallback(role);
+    kb.text("« К списку", listCb).row();
+    kb.text("« Меню", "menu:back");
     await ctx.editMessageText(formatOrderHtml(o), {
       parse_mode: "HTML",
       reply_markup: kb,
@@ -838,13 +1644,155 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     await ctx.answerCallbackQuery({ text: "Ожидаем водителя" });
   });
 
-  /** Текстовые шаги черновика */
-  bot.on("message:text", async (ctx) => {
-    const d = ctx.session.orderDraft;
-    if (!d || ctx.session.role !== "client") {
+  /** Подтверждение телефона через контакт (не SMS). */
+  bot.on("message:contact", async (ctx) => {
+    const uid = ctx.from?.id;
+    const contact = ctx.message.contact;
+    if (uid === undefined || !contact) {
       return;
     }
+    if (ctx.session.role !== "client") {
+      return;
+    }
+    if (contact.user_id !== undefined && contact.user_id !== uid) {
+      await ctx.reply(
+        "Нужен <b>ваш</b> номер: нажмите «Отправить мой номер» под полем ввода, не пересылайте чужой контакт.",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    if (await needsPhoneVerification(uid)) {
+      await setClientPhone(uid, contact.phone_number);
+      await ctx.reply("✅ Номер телефона подтверждён.", {
+        reply_markup: { remove_keyboard: true },
+      });
+      await sendBusinessNamePrompt(ctx);
+      return;
+    }
+    if (await isClientRegistered(uid)) {
+      await ctx.reply("Номер уже был подтверждён ранее.", {
+        reply_markup: { remove_keyboard: true },
+      });
+      await sendMainMenu(ctx, "client");
+      return;
+    }
+    if (await needsBusinessName(uid)) {
+      await ctx.reply("Сначала введите название ИП или магазина одним текстовым сообщением.");
+      return;
+    }
+  });
+
+  /** Текстовые шаги черновика */
+  bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
+    const uidText = ctx.from?.id;
+    if (
+      ctx.session.role === "client" &&
+      uidText !== undefined &&
+      ctx.session.editingBusinessName &&
+      (text === "Меню" || text === "« Меню")
+    ) {
+      ctx.session.editingBusinessName = undefined;
+      await sendMainMenu(ctx, "client");
+      try {
+        await ctx.deleteMessage();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    if (
+      ctx.session.role === "client" &&
+      uidText !== undefined &&
+      ctx.session.editingBusinessName &&
+      !(await isClientRegistered(uidText))
+    ) {
+      ctx.session.editingBusinessName = undefined;
+      await sendMainMenu(ctx, "client");
+      return;
+    }
+    if (
+      ctx.session.role === "client" &&
+      uidText !== undefined &&
+      ctx.session.editingBusinessName &&
+      (await isClientRegistered(uidText))
+    ) {
+      if (text.length < 2) {
+        await ctx.reply("Название слишком короткое — минимум 2 символа.");
+        return;
+      }
+      if (text.length > 200) {
+        await ctx.reply("Сократите название до 200 символов.");
+        return;
+      }
+      await setClientBusinessName(uidText, text);
+      ctx.session.editingBusinessName = undefined;
+      await sendMainMenu(ctx, "client", { clientBusinessNameUpdated: true });
+      return;
+    }
+    if (ctx.session.role === "client" && uidText !== undefined && (await needsBusinessName(uidText))) {
+      if (text.length < 2) {
+        await ctx.reply("Название слишком короткое — минимум 2 символа.");
+        return;
+      }
+      if (text.length > 200) {
+        await ctx.reply("Сократите название до 200 символов.");
+        return;
+      }
+      await setClientBusinessName(uidText, text);
+      await sendMainMenu(ctx, "client", { clientRegistrationComplete: true });
+      return;
+    }
+    if (
+      ctx.session.role === "client" &&
+      uidText !== undefined &&
+      (await needsPhoneVerification(uidText))
+    ) {
+      await ctx.reply(
+        "Чтобы подтвердить номер, нажмите кнопку <b>«Отправить мой номер»</b> под полем ввода (не пишите номер текстом).",
+        { parse_mode: "HTML", reply_markup: phoneRequestKeyboard() },
+      );
+      return;
+    }
+    /** Старая reply-клавиатура «Меню»: открываем меню и убираем сообщение из чата. */
+    if (ctx.session.role === "client" && (text === "Меню" || text === "« Меню")) {
+      ctx.session.orderDraft = undefined;
+      ctx.session.editingBusinessName = undefined;
+      await sendMainMenu(ctx, "client");
+      try {
+        await ctx.deleteMessage();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    const d = ctx.session.orderDraft;
+    const role = ctx.session.role;
+
+    if (d?.step === "proxy_client_id" && role && isManagerLikeRole(role)) {
+      const raw = text.replace(/\s/g, "");
+      const id = Number.parseInt(raw, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        await ctx.reply("Укажите числовой Telegram user id (например 123456789).");
+        return;
+      }
+      d.proxyClientTelegramId = id;
+      d.step = "product";
+      const cap = await proxyTargetClientCaptionHtml(id);
+      await ctx.reply(
+        draftMsg(
+          `📝 <b>Шаг 1/7</b>${cap}\n\nКакой у клиента товар?\n\nНапишите одним сообщением.`,
+          d,
+        ),
+        { parse_mode: "HTML", reply_markup: kbCancelOnly() },
+      );
+      return;
+    }
+
+    if (!d || !canUseOrderDraft(ctx)) {
+      return;
+    }
 
     if (d.step === "product") {
       if (!text) {
@@ -852,8 +1800,9 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       }
       d.product = text;
       d.step = "quantity";
-      await ctx.reply("📝 <b>Шаг 2/6</b>\nКоличество товара (в единицах измерения):", {
+      await ctx.reply(draftMsg("📝 <b>Шаг 2/7</b>\nКоличество товара (в единицах измерения):", d), {
         parse_mode: "HTML",
+        reply_markup: kbBackCancel(),
       });
       return;
     }
@@ -863,8 +1812,9 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       }
       d.quantityText = text;
       d.step = "tz";
-      await ctx.reply("📝 <b>Шаг 3/6</b>\nТЗ (техническое задание / условия):", {
+      await ctx.reply(draftMsg("📝 <b>Шаг 3/7</b>\nТЗ (техническое задание / условия):", d), {
         parse_mode: "HTML",
+        reply_markup: kbBackCancel(),
       });
       return;
     }
@@ -874,31 +1824,70 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       }
       d.tz = text;
       d.step = "pickup_decision";
+      await ctx.reply(
+        draftMsg("📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?", d),
+        {
+          parse_mode: "HTML",
+          reply_markup: kbPickupDecision(),
+        },
+      );
+      return;
+    }
+    if (d.step === "pick_address") {
+      if (!text) {
+        return;
+      }
+      d.pickupPoints.push({ addressText: text });
+      d.step = "pick_after_point";
+      await ctx.reply(draftMsg(MSG_AFTER_PICKUP_ADDED, d), {
+        parse_mode: "HTML",
+        reply_markup: kbPickAfterPoint(),
+      });
+      return;
+    }
+    if (d.step === "desired_delivery_date") {
+      if (!text) {
+        return;
+      }
+      if (text.length > 200) {
+        await ctx.reply("Укажите дату не длиннее 200 символов.");
+        return;
+      }
+      d.desiredDeliveryDate = text;
+      d.step = "comment";
       const kb = new InlineKeyboard()
-        .text("Да", "pickup:y")
-        .text("Нет", "pickup:n")
+        .text("Пропустить комментарий", "skip:comment")
+        .row()
+        .text("« Назад", "draft:nav_back")
         .row()
         .text("« Отмена", "menu:back");
-      await ctx.reply("📝 <b>Шаг 4/6</b>\nНужен ли <b>забор товара</b> (с маркетплейса)?", {
-        parse_mode: "HTML",
-        reply_markup: kb,
-      });
+      await ctx.reply(
+        draftMsg(
+          "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
+          d,
+        ),
+        { parse_mode: "HTML", reply_markup: kb },
+      );
       return;
     }
     if (d.step === "comment") {
       d.comment = text;
       d.step = "confirm";
-      const kb = new InlineKeyboard()
-        .text("✅ Создать черновик", "draft:create")
-        .row()
-        .text("« Отмена", "menu:back");
       await ctx.reply(
-        `${formatDraftSummaryHtml(d)}\n\nПодтвердите создание черновика заявки.`,
-        { parse_mode: "HTML", reply_markup: kb },
+        draftMsg(`${formatDraftSummaryHtml(d)}\n\nПодтвердите создание черновика заявки.`, d),
+        { parse_mode: "HTML", reply_markup: kbConfirmDraft() },
       );
       return;
     }
   });
+
+  void bot.api
+    .setMyCommands([
+      { command: "start", description: "Начать / главное меню" },
+      { command: "menu", description: "Главное меню" },
+      { command: "cancel", description: "Сбросить черновик заявки" },
+    ])
+    .catch((e) => console.error("setMyCommands", e));
 
   bot.catch((err) => {
     console.error("bot error", err);
