@@ -219,16 +219,16 @@ function renderMain() {
           <span class="menu-text">Новая заявка</span>
         </button>
         <button class="menu-btn" type="button" id="btn-my-orders">
-          <span class="menu-icon">📋</span>
-          <span class="menu-text">Заявки</span>
+          <span class="menu-icon">🔄</span>
+          <span class="menu-text">Активные</span>
         </button>
         <button class="menu-btn" type="button" id="btn-my-drafts">
           <span class="menu-icon">📄</span>
           <span class="menu-text">Черновики</span>
         </button>
         <button class="menu-btn" type="button" id="btn-active-orders">
-          <span class="menu-icon">🔄</span>
-          <span class="menu-text">Активные</span>
+          <span class="menu-icon">📁</span>
+          <span class="menu-text">Архив</span>
         </button>
         <button class="menu-btn" type="button" id="btn-edit-business">
           <span class="menu-icon">✏️</span>
@@ -295,9 +295,9 @@ function renderMain() {
   // Привязываем обработчики в зависимости от роли
   if (role === "client") {
     document.getElementById("btn-new-order")?.addEventListener("click", () => checkRegistrationAndProceed());
-    document.getElementById("btn-my-orders")?.addEventListener("click", () => goToOrderList("client", "all"));
+    document.getElementById("btn-my-orders")?.addEventListener("click", () => goToOrderList("client", "active"));
     document.getElementById("btn-my-drafts")?.addEventListener("click", () => goToDrafts());
-    document.getElementById("btn-active-orders")?.addEventListener("click", () => goToOrderList("client", "active"));
+    document.getElementById("btn-active-orders")?.addEventListener("click", () => goToOrderList("client", "archive"));
     document.getElementById("btn-edit-business")?.addEventListener("click", () => goToEditBusiness());
   } else if (role === "packer") {
     document.getElementById("btn-packer-orders")?.addEventListener("click", () => goToOrderList("packer", "all"));
@@ -943,13 +943,13 @@ function updateWarehouseOptions(marketplace, selectedId) {
 
 async function renderOrderList(roleFilter = "client", typeFilter = "all") {
   const titleMap = {
-    client_all: "Заявки",
-    client_active: "Активные заявки",
-    packer_all: "Заявки на обработку",
-    packer_archive: "Архив",
-    driver_all: "Мои рейсы",
-    driver_archive: "Архив рейсов",
-    staff_all: "Все заявки",
+    client_active: "🔄 Активные заявки",
+    client_archive: "📁 Архив",
+    packer_all: "📦 Заявки на обработку",
+    packer_archive: "📁 Архив",
+    driver_all: "🚚 Мои рейсы",
+    driver_archive: "📁 Архив рейсов",
+    staff_all: "📑 Все заявки",
   };
   const key = `${roleFilter}_${typeFilter}`;
   const title = titleMap[key] || "Заявки";
@@ -993,7 +993,28 @@ async function renderOrderList(roleFilter = "client", typeFilter = "all") {
     const orders = j.orders || {};
     const allStatuses = Object.keys(orders);
     
-    if (allStatuses.length === 0) {
+    // Для клиента фильтруем на активные и архив
+    let filteredOrders = {};
+    if (roleFilter === "client") {
+      const activeStatuses = ["accepted", "receiving", "receiving_done", "pack_sort", "ready_for_unload", "in_transit"];
+      const archiveStatuses = ["done", "cancelled"];
+      
+      if (typeFilter === "active") {
+        for (const status of activeStatuses) {
+          if (orders[status]) filteredOrders[status] = orders[status];
+        }
+      } else if (typeFilter === "archive") {
+        for (const status of archiveStatuses) {
+          if (orders[status]) filteredOrders[status] = orders[status];
+        }
+      }
+    } else {
+      filteredOrders = orders;
+    }
+    
+    const statusesToShow = Object.keys(filteredOrders);
+    
+    if (statusesToShow.length === 0) {
       document.getElementById("orders-content").innerHTML = `
         <div class="empty-state">
           <p class="empty-icon">📋</p>
@@ -1004,8 +1025,8 @@ async function renderOrderList(roleFilter = "client", typeFilter = "all") {
     }
 
     let html = "";
-    for (const status of allStatuses) {
-      const orderList = orders[status] || [];
+    for (const status of statusesToShow) {
+      const orderList = filteredOrders[status] || [];
       if (orderList.length === 0) continue;
 
       html += `<div style="margin-bottom: 24px;">
@@ -1633,6 +1654,20 @@ async function renderOrderDetail(orderId) {
     const o = j.order;
     let html = `
       <div style="padding: 0 16px;">
+        <!-- Роадмап статусов -->
+        <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
+          <p style="font-size: 12px; color: var(--secondary-color); font-weight: 600; margin: 0 0 12px 0;">📍 Этапы заявки</p>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            ${renderStatusStep("Оформлено", o.status, "accepted")}
+            ${renderStatusStep("На складе", o.status, "receiving")}
+            ${renderStatusStep("В работе", o.status, "receiving_done")}
+            ${renderStatusStep("К отгрузке", o.status, "pack_sort")}
+            ${renderStatusStep("К рейсу", o.status, "ready_for_unload")}
+            ${renderStatusStep("В пути", o.status, "in_transit")}
+            ${renderStatusStep("Завершено", o.status, "done")}
+          </div>
+        </div>
+
         <!-- Основная информация -->
         <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
@@ -1756,6 +1791,41 @@ function getActionLabel(action) {
     finalize_order: "✅ Оформить заявку",
   };
   return labels[action] || action;
+}
+
+function getActionLabel(action) {
+  const labels = {
+    start_receiving: "📥 Начать приём",
+    finish_receiving: "✅ Приём завершён",
+    send_to_sort: "📦 Отправить на сортировку",
+    start_delivery: "🚚 Начать доставку",
+    complete_delivery: "✅ Доставка завершена",
+    finalize_order: "✅ Оформить заявку",
+  };
+  return labels[action] || action;
+}
+
+function renderStatusStep(label, currentStatus, stepStatus) {
+  const statuses = ["accepted", "receiving", "receiving_done", "pack_sort", "ready_for_unload", "in_transit", "done"];
+  const currentIdx = statuses.indexOf(currentStatus);
+  const stepIdx = statuses.indexOf(stepStatus);
+  
+  let icon = "⭕"; // Ожидание
+  let color = "var(--secondary-color)";
+  
+  if (stepIdx < currentIdx) {
+    icon = "✅"; // Завершено
+    color = "var(--success-color)";
+  } else if (stepIdx === currentIdx) {
+    icon = "🔄"; // В процессе
+    color = "var(--primary-color)";
+  }
+
+  return `
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 18px;">${icon}</span>
+      <span style="font-size: 13px; color: ${color}; font-weight: 600;">${label}</span>
+    </div>`;
 }
 
 async function executeOrderAction(orderId, action, event) {

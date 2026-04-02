@@ -79,14 +79,14 @@ export default async (req: any, res: any): Promise<void> => {
       // Клиент видит только свои заявки
       filteredOrders = allOrders.filter((o) => o.clientTelegramId === uid);
     } else if (effectiveRole === "packer") {
-      // Пакер видит заявки в статусах: accepted, receiving, receiving_done
+      // Пакер видит заявки в работе: accepted, receiving, receiving_done, pack_sort
       filteredOrders = allOrders.filter((o) =>
-        ["accepted", "receiving", "receiving_done"].includes(o.status)
+        ["accepted", "receiving", "receiving_done", "pack_sort"].includes(o.status)
       );
     } else if (effectiveRole === "driver") {
-      // Водитель видит заявки в статусах: ready_for_delivery, delivering, delivered
+      // Водитель видит заявки в работе: ready_for_unload, in_transit
       filteredOrders = allOrders.filter((o) =>
-        ["ready_for_delivery", "delivering", "delivered"].includes(o.status)
+        ["ready_for_unload", "in_transit"].includes(o.status)
       );
     } else if (effectiveRole === "manager" || effectiveRole === "supervisor") {
       // Менеджер/управляющий видят ВСЕ заявки
