@@ -127,6 +127,7 @@ function getAvailableActions(role: string, status: string): string[] {
     if (status === "accepted") actions.push("start_receiving");
     if (status === "receiving") actions.push("finish_receiving");
     if (status === "receiving_done") actions.push("send_to_sort");
+    if (status === "pack_sort") actions.push("ready_for_unload"); // Переход к водителю
   } else if (role === "driver") {
     if (status === "ready_for_unload") actions.push("start_delivery");
     if (status === "in_transit") actions.push("complete_delivery");
@@ -135,6 +136,7 @@ function getAvailableActions(role: string, status: string): string[] {
     if (status === "accepted") actions.push("start_receiving");
     if (status === "receiving") actions.push("finish_receiving");
     if (status === "receiving_done") actions.push("send_to_sort");
+    if (status === "pack_sort") actions.push("ready_for_unload");
     if (status === "ready_for_unload") actions.push("start_delivery");
     if (status === "in_transit") actions.push("complete_delivery");
     if (status === "draft") actions.push("finalize_order");

@@ -107,16 +107,18 @@ export default async (req: any, res: any): Promise<void> => {
       if (action === "start_receiving" && order.status === "accepted") newStatus = "receiving";
       if (action === "finish_receiving" && order.status === "receiving") newStatus = "receiving_done";
       if (action === "send_to_sort" && order.status === "receiving_done") newStatus = "pack_sort";
+      if (action === "ready_for_unload" && order.status === "pack_sort") newStatus = "ready_for_unload";
     } else if (effectiveRole === "driver") {
       if (action === "start_delivery" && order.status === "ready_for_unload") newStatus = "in_transit";
-      if (action === "complete_delivery" && order.status === "in_transit") newStatus = "delivered";
+      if (action === "complete_delivery" && order.status === "in_transit") newStatus = "done";
     } else if (effectiveRole === "manager" || effectiveRole === "supervisor") {
       // Менеджеры могут выполнять разные действия
       if (action === "start_receiving") newStatus = "receiving";
       if (action === "finish_receiving") newStatus = "receiving_done";
       if (action === "send_to_sort") newStatus = "pack_sort";
+      if (action === "ready_for_unload") newStatus = "ready_for_unload";
       if (action === "start_delivery") newStatus = "in_transit";
-      if (action === "complete_delivery") newStatus = "delivered";
+      if (action === "complete_delivery") newStatus = "done";
     }
 
     if (!newStatus) {

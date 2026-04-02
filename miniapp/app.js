@@ -1786,18 +1786,7 @@ function getActionLabel(action) {
     start_receiving: "📥 Начать приём",
     finish_receiving: "✅ Приём завершён",
     send_to_sort: "📦 Отправить на сортировку",
-    start_delivery: "🚚 Начать доставку",
-    complete_delivery: "✅ Доставка завершена",
-    finalize_order: "✅ Оформить заявку",
-  };
-  return labels[action] || action;
-}
-
-function getActionLabel(action) {
-  const labels = {
-    start_receiving: "📥 Начать приём",
-    finish_receiving: "✅ Приём завершён",
-    send_to_sort: "📦 Отправить на сортировку",
+    ready_for_unload: "🚚 Готово к рейсу",
     start_delivery: "🚚 Начать доставку",
     complete_delivery: "✅ Доставка завершена",
     finalize_order: "✅ Оформить заявку",
