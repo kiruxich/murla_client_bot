@@ -1,4 +1,21 @@
 // Telegram Mini App — синхронизируйте списки складов с src/config/warehouses.ts
+
+// Полная очистка кеша браузера для Mini App
+if ("caches" in window) {
+  caches.keys().then((names) => {
+    names.forEach((name) => caches.delete(name));
+  });
+}
+
+// Отключаем кеширование всех fetch-запросов глобально
+const originalFetch = window.fetch;
+window.fetch = function (...args) {
+  const init = args[1] || {};
+  init.cache = "no-store";
+  init.headers = { ...init.headers, "Cache-Control": "no-cache, no-store, must-revalidate" };
+  return originalFetch.apply(this, [args[0], init]);
+};
+
 const tg = window.Telegram.WebApp;
 
 tg.ready();
@@ -89,11 +106,22 @@ const formState = {
   registrationStep: "done",
 };
 
-const initDataUnsafe = tg.initDataUnsafe;
-const userId = initDataUnsafe?.user?.id ?? "unknown";
-const userName = initDataUnsafe?.user?.first_name ?? "Пользователь";
+let initDataUnsafe = tg.initDataUnsafe;
+let userId = initDataUnsafe?.user?.id ?? "unknown";
+let userName = initDataUnsafe?.user?.first_name ?? "Пользователь";
 
 const app = document.getElementById("app");
+
+// Функция для проверки initData перед запросом
+function getInitData() {
+  const data = tg.initData;
+  if (!data) {
+    console.error("❌ initData пустая! Telegram Web App может быть неправильно инициализирован.");
+    showNotification("❌ Ошибка инициализации приложения. Попробуйте заново открыть его.");
+    throw new Error("initData not available");
+  }
+  return data;
+}
 
 function escapeHtml(s) {
   return String(s)
@@ -416,20 +444,25 @@ function renderOrderList() {
 }
 
 async function fetchMiniappConfig() {
-  const initData = tg.initData;
-  if (!initData) {
-    return { canSwitchRole: false, currentRole: "client" };
-  }
   try {
-    // Добавляем timestamp чтобы избежать кеширования
+    const initData = getInitData();
     const timestamp = Date.now();
-    const r = await fetch("/api/miniapp-config?initData=" + encodeURIComponent(initData) + "&t=" + timestamp, {
+    console.log("🔍 fetchMiniappConfig: initData present, calling API...");
+    const r = await fetch(`/api/miniapp-config?initData=${encodeURIComponent(initData)}&t=${timestamp}`, {
+      method: "GET",
+      cache: "no-store",
       headers: {
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
       },
     });
-    if (!r.ok) return { canSwitchRole: false, currentRole: "client" };
+    if (!r.ok) {
+      console.error("❌ miniapp-config response not ok:", r.status);
+      return { canSwitchRole: false, currentRole: "client", registered: true, registrationStep: "done" };
+    }
     const j = await r.json();
+    console.log("✅ miniapp-config result:", j);
     return {
       canSwitchRole: Boolean(j.canSwitchRole),
       currentRole: j.currentRole || "client",
@@ -437,7 +470,7 @@ async function fetchMiniappConfig() {
       registrationStep: j.registrationStep || "done",
     };
   } catch (err) {
-    console.error("fetchMiniappConfig error:", err);
+    console.error("❌ fetchMiniappConfig error:", err);
     return { canSwitchRole: false, currentRole: "client", registered: true, registrationStep: "done" };
   }
 }
@@ -461,13 +494,18 @@ function goToProfile() {
 
 async function fetchCalendarOrders() {
   try {
-    const initData = tg.initData;
-    if (!initData) return [];
-    const r = await fetch("/api/miniapp-orders?initData=" + encodeURIComponent(initData));
+    const initData = getInitData();
+    console.log("🔍 fetchCalendarOrders: calling API...");
+    const r = await fetch(`/api/miniapp-orders?initData=${encodeURIComponent(initData)}&t=${Date.now()}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
+    });
     if (!r.ok) return [];
     const j = await r.json();
+    console.log("✅ fetchCalendarOrders result:", j.orders?.length || 0, "orders");
     return Array.isArray(j.orders) ? j.orders : [];
-  } catch {
+  } catch (err) {
+    console.error("❌ fetchCalendarOrders error:", err);
     return [];
   }
 }
@@ -525,28 +563,37 @@ function showRoleSelector(currentRole) {
     }
 
     try {
+      const initData = getInitData();
+      console.log("📤 Sending switch-role request for:", selectedRole);
       const r = await fetch("/api/miniapp-switch-role", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
         body: JSON.stringify({
-          initData: tg.initData,
+          initData,
           selectedRole,
         }),
       });
       const j = await r.json();
+      console.log("✅ switch-role response:", j);
       if (j.ok) {
         formState.currentRole = selectedRole;
         showNotification("✅ Роль изменена! Смотрите чат бота.");
         setTimeout(() => tg.close(), 1200);
       } else {
-        showNotification("❌ " + (j.error === "role_locked" ? "Роль закреплена" : "Ошибка смены роли"));
+        const msg = j.error === "role_locked" ? "Роль закреплена" : "Ошибка смены роли";
+        console.error("❌ Role switch failed:", j.error);
+        showNotification("❌ " + msg);
         if (confirmBtn) {
           confirmBtn.disabled = false;
           confirmBtn.textContent = "Подтвердить";
         }
       }
     } catch (err) {
-      console.error("switch-role error:", err);
+      console.error("❌ switch-role error:", err);
       showNotification("❌ Ошибка сети");
       if (confirmBtn) {
         confirmBtn.disabled = false;
@@ -702,7 +749,7 @@ function renderRegistration(step) {
         const r = await fetch("/api/miniapp-register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ initData: tg.initData, step: "consent" }),
+          body: JSON.stringify({ initData: getInitData(), step: "consent" }),
         });
         const j = await r.json();
         if (j.ok) {
@@ -810,7 +857,7 @@ function renderRegistration(step) {
         const r = await fetch("/api/miniapp-register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ initData: tg.initData, step: "business_name", businessName: val }),
+          body: JSON.stringify({ initData: getInitData(), step: "business_name", businessName: val }),
         });
         const j = await r.json();
         if (j.ok && j.nextStep === "done") {
@@ -844,7 +891,7 @@ async function submitPhone(phone) {
     const r = await fetch("/api/miniapp-register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData: tg.initData, step: "phone", phone: cleaned }),
+      body: JSON.stringify({ initData: getInitData(), step: "phone", phone: cleaned }),
     });
     const j = await r.json();
     if (j.ok) {
@@ -1032,11 +1079,17 @@ function showOrderSummary(orderData) {
     }
 
     try {
+      const initData = getInitData();
+      console.log("📤 Sending create-order request...");
       const r = await fetch("/api/miniapp-create-order", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
         body: JSON.stringify({
-          initData: tg.initData,
+          initData,
           product: orderData.product,
           quantity: orderData.quantity,
           tz: orderData.tz,
@@ -1049,6 +1102,7 @@ function showOrderSummary(orderData) {
         }),
       });
       const j = await r.json();
+      console.log("✅ create-order response:", j);
       if (j.ok) {
         showNotification("✅ Заявка №" + j.orderId + " создана! Смотрите чат бота.");
         formState.orderData = {
@@ -1068,6 +1122,7 @@ function showOrderSummary(orderData) {
         const msg = j.error === "not_registered" ? "Завершите регистрацию в боте"
           : j.error === "client_role_required" ? "Доступно только в роли Клиент"
           : "Ошибка создания заявки";
+        console.error("❌ Order creation failed:", j.error);
         showNotification("❌ " + msg);
         if (confirmBtn) {
           confirmBtn.disabled = false;
@@ -1075,7 +1130,7 @@ function showOrderSummary(orderData) {
         }
       }
     } catch (err) {
-      console.error("create-order error:", err);
+      console.error("❌ create-order error:", err);
       showNotification("❌ Ошибка сети");
       if (confirmBtn) {
         confirmBtn.disabled = false;
