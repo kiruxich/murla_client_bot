@@ -159,22 +159,23 @@ const sortOrdersByUpdatedDesc = (orders: FulfillmentOrder[]): FulfillmentOrder[]
 const MURLA_SITE_URL = "https://murla.company";
 const MURLA_GROUP_TG_URL = "https://t.me/MurlaWbOzonFF";
 
-/** Сайт и группа Telegram — для всех ролей в главном меню (по одной кнопке в ряд — длинные подписи). */
+/** Сайт и группа — в одну строку (две колонки), короткие подписи для «широкой» сетки. */
 const withMurlaLinksRow = (kb: InlineKeyboard): InlineKeyboard =>
   kb
     .row()
-    .url("🌐 Сайт компании — murla.company", MURLA_SITE_URL)
-    .row()
-    .url("💬 Группа в Telegram: новости, WB и Ozon", MURLA_GROUP_TG_URL);
+    .url("🌐 Сайт murla.company", MURLA_SITE_URL)
+    .url("💬 Группа murlaFF", MURLA_GROUP_TG_URL);
 
 const mainMenuKeyboard = (role: BotRole): InlineKeyboard => {
   const kb = new InlineKeyboard();
   if (role === "client") {
-    kb.text("➕ Новая заявка", "menu:new_order").row();
-    kb.text("📋 Все заявки", "menu:my_orders").row();
-    kb.text("📄 Черновики", "menu:my_drafts").row();
-    kb.text("🔄 Активные", "menu:my_active").row();
-    kb.text("✏️ Название ИП / магазина", "menu:edit_business");
+    kb.text("➕ Новая заявка", "menu:new_order")
+      .text("📋 Все заявки", "menu:my_orders")
+      .row()
+      .text("📄 Черновики", "menu:my_drafts")
+      .text("🔄 Активные", "menu:my_active")
+      .row()
+      .text("✏️ Название ИП / магазина", "menu:edit_business");
     const mini = getMiniAppUrl();
     if (mini) {
       kb.row().webApp("📱 Приложение", mini);
@@ -182,19 +183,18 @@ const mainMenuKeyboard = (role: BotRole): InlineKeyboard => {
     return withMurlaLinksRow(kb);
   }
   if (role === "packer") {
-    kb.text("📦 Заявки", "menu:packer_orders").row();
-    kb.text("📁 Архив выполненных", "menu:packer_archive");
+    kb.text("📦 Заявки", "menu:packer_orders").text("📁 Архив", "menu:packer_archive");
     return withMurlaLinksRow(kb);
   }
   if (role === "driver") {
-    kb.text("🚚 Заявки", "menu:driver_orders").row();
-    kb.text("📁 Архив выполненных", "menu:driver_archive");
+    kb.text("🚚 Заявки", "menu:driver_orders").text("📁 Архив", "menu:driver_archive");
     return withMurlaLinksRow(kb);
   }
   if (isManagerLikeRole(role)) {
-    kb.text("➕ Заявка за клиента", "menu:proxy_order").row();
-    kb.text("📑 Все заявки", "menu:all_orders").row();
-    kb.text("📊 Отчёт", "menu:report");
+    kb.text("➕ За клиента", "menu:proxy_order")
+      .text("📑 Все заявки", "menu:all_orders")
+      .row()
+      .text("📊 Отчёт", "menu:report");
     return withMurlaLinksRow(kb);
   }
   return withMurlaLinksRow(kb);
@@ -1149,7 +1149,6 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       await ctx.editMessageText("Заявок пока нет.", {
         reply_markup: new InlineKeyboard()
           .text("➕ Новая заявка", "menu:new_order")
-          .row()
           .text("« Меню", "menu:back"),
       });
       return;
@@ -1184,7 +1183,6 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         {
           reply_markup: new InlineKeyboard()
             .text("➕ Новая заявка", "menu:new_order")
-            .row()
             .text("« Меню", "menu:back"),
         },
       );
@@ -1218,7 +1216,6 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       await ctx.editMessageText("Активных заявок нет (нет заявок в работе между черновиком и завершением).", {
         reply_markup: new InlineKeyboard()
           .text("📋 Все заявки", "menu:my_orders")
-          .row()
           .text("« Меню", "menu:back"),
       });
       return;
