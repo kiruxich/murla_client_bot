@@ -191,21 +191,91 @@ function bindPickupInputs() {
 }
 
 function renderMain() {
-  app.innerHTML = `
+  const roleLabel = {
+    client: "Клиент",
+    packer: "Работник склада",
+    driver: "Водитель",
+    manager: "Менеджер",
+    supervisor: "Управляющий",
+  }[formState.currentRole] || "Неизвестно";
+
+  const role = formState.currentRole;
+  let menuHtml = `
     <div class="container">
       <div class="header">
         <h1>Мурла 📦</h1>
         <p class="subtitle">Управление заявками</p>
+        <p class="info-text small" style="margin-top:8px;">Роль: <strong>${roleLabel}</strong></p>
       </div>
-      <div class="menu">
+      <div class="menu">`;
+
+  // Меню для клиента
+  if (role === "client") {
+    menuHtml += `
         <button class="menu-btn" type="button" id="btn-new-order">
           <span class="menu-icon">➕</span>
           <span class="menu-text">Новая заявка</span>
         </button>
-        <button class="menu-btn" type="button" id="btn-order-list">
+        <button class="menu-btn" type="button" id="btn-my-orders">
           <span class="menu-icon">📋</span>
-          <span class="menu-text">Мои заявки</span>
+          <span class="menu-text">Заявки</span>
         </button>
+        <button class="menu-btn" type="button" id="btn-my-drafts">
+          <span class="menu-icon">📄</span>
+          <span class="menu-text">Черновики</span>
+        </button>
+        <button class="menu-btn" type="button" id="btn-active-orders">
+          <span class="menu-icon">🔄</span>
+          <span class="menu-text">Активные</span>
+        </button>
+        <button class="menu-btn" type="button" id="btn-edit-business">
+          <span class="menu-icon">✏️</span>
+          <span class="menu-text">ИП / магазин</span>
+        </button>`;
+  }
+  // Меню для работника склада
+  else if (role === "packer") {
+    menuHtml += `
+        <button class="menu-btn" type="button" id="btn-packer-orders">
+          <span class="menu-icon">📦</span>
+          <span class="menu-text">Заявки</span>
+        </button>
+        <button class="menu-btn" type="button" id="btn-packer-archive">
+          <span class="menu-icon">📁</span>
+          <span class="menu-text">Архив</span>
+        </button>`;
+  }
+  // Меню для водителя
+  else if (role === "driver") {
+    menuHtml += `
+        <button class="menu-btn" type="button" id="btn-driver-orders">
+          <span class="menu-icon">🚚</span>
+          <span class="menu-text">Заявки</span>
+        </button>
+        <button class="menu-btn" type="button" id="btn-driver-archive">
+          <span class="menu-icon">📁</span>
+          <span class="menu-text">Архив</span>
+        </button>`;
+  }
+  // Меню для менеджера / управляющего
+  else if (role === "manager" || role === "supervisor") {
+    menuHtml += `
+        <button class="menu-btn" type="button" id="btn-proxy-order">
+          <span class="menu-icon">➕</span>
+          <span class="menu-text">За клиента</span>
+        </button>
+        <button class="menu-btn" type="button" id="btn-all-orders">
+          <span class="menu-icon">📑</span>
+          <span class="menu-text">Все заявки</span>
+        </button>
+        <button class="menu-btn" type="button" id="btn-report">
+          <span class="menu-icon">📊</span>
+          <span class="menu-text">Отчёт</span>
+        </button>`;
+  }
+
+  // Профиль (для всех)
+  menuHtml += `
         <button class="menu-btn" type="button" id="btn-profile">
           <span class="menu-icon">👤</span>
           <span class="menu-text">Профиль</span>
@@ -216,10 +286,30 @@ function renderMain() {
         <p class="info-text small">Ваш ID: ${userId}</p>
       </div>
     </div>`;
+
+  app.innerHTML = menuHtml;
   formState.step = "main";
-  document.getElementById("btn-new-order").onclick = () => checkRegistrationAndProceed();
-  document.getElementById("btn-order-list").onclick = () => goToOrderList();
-  document.getElementById("btn-profile").onclick = () => goToProfile();
+
+  // Привязываем обработчики в зависимости от роли
+  if (role === "client") {
+    document.getElementById("btn-new-order")?.addEventListener("click", () => checkRegistrationAndProceed());
+    document.getElementById("btn-my-orders")?.addEventListener("click", () => goToOrderList("client", "all"));
+    document.getElementById("btn-my-drafts")?.addEventListener("click", () => goToDrafts());
+    document.getElementById("btn-active-orders")?.addEventListener("click", () => goToOrderList("client", "active"));
+    document.getElementById("btn-edit-business")?.addEventListener("click", () => goToEditBusiness());
+  } else if (role === "packer") {
+    document.getElementById("btn-packer-orders")?.addEventListener("click", () => goToOrderList("packer", "all"));
+    document.getElementById("btn-packer-archive")?.addEventListener("click", () => goToOrderList("packer", "archive"));
+  } else if (role === "driver") {
+    document.getElementById("btn-driver-orders")?.addEventListener("click", () => goToOrderList("driver", "all"));
+    document.getElementById("btn-driver-archive")?.addEventListener("click", () => goToOrderList("driver", "archive"));
+  } else if (role === "manager" || role === "supervisor") {
+    document.getElementById("btn-proxy-order")?.addEventListener("click", () => showNotification("➕ Заявка за клиента — в разработке"));
+    document.getElementById("btn-all-orders")?.addEventListener("click", () => goToOrderList("staff", "all"));
+    document.getElementById("btn-report")?.addEventListener("click", () => showNotification("📊 Отчёт — в разработке"));
+  }
+
+  document.getElementById("btn-profile")?.addEventListener("click", () => goToProfile());
   updateButtonState();
 }
 
@@ -423,23 +513,547 @@ function renderNewOrder() {
   updateButtonState();
 }
 
-function renderOrderList() {
+async function renderEditBusiness() {
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <button class="back-btn" type="button" id="back-from-business">← Назад</button>
+        <h2>Профиль компании</h2>
+      </div>
+      <div id="business-form-content" style="padding: 16px 0;">
+        <p style="text-align: center; color: var(--secondary-color);">⏳ Загрузка...</p>
+      </div>
+    </div>`;
+  formState.step = "edit-business";
+  document.getElementById("back-from-business").onclick = () => renderMain();
+
+  try {
+    const initData = getInitData();
+    console.log("📥 Загружаю профиль компании...");
+    const r = await fetch(`/api/miniapp-edit-business?initData=${encodeURIComponent(initData)}`, {
+      method: "GET",
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
+    });
+    const j = await r.json();
+    console.log("✅ Business profile response:", j);
+
+    if (!j.ok) {
+      showNotification("❌ Ошибка загрузки профиля");
+      renderMain();
+      return;
+    }
+
+    const businessName = j.businessName || "";
+    let html = `
+      <div style="padding: 0 16px;">
+        <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
+          <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 12px 0;">
+            Укажите название вашей компании, как оно будет отображаться в списках заявок.
+          </p>
+          <input type="text" id="business-name-input" 
+            value="${escapeHtml(businessName)}"
+            placeholder="ИП Иванов Иван / ООО Компания / Магазин Альтеро"
+            maxlength="200"
+            style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--input-bg); color: var(--text-color); font-size: 14px; box-sizing: border-box; margin-bottom: 12px;">
+          <p style="font-size: 11px; color: var(--secondary-color); margin: 0;">
+            <span id="char-count">0</span>/200 символов
+          </p>
+        </div>
+
+        <div style="display: flex; gap: 8px; flex-direction: column;">
+          <button type="button" class="btn btn-primary" id="btn-save-business" style="width: 100%;">✅ Сохранить</button>
+          <button type="button" class="btn btn-secondary" id="btn-cancel-business" style="width: 100%;">✕ Отмена</button>
+        </div>
+      </div>`;
+
+    document.getElementById("business-form-content").innerHTML = html;
+
+    // Обновляем счётчик символов
+    const input = document.getElementById("business-name-input");
+    const counter = document.getElementById("char-count");
+    input.addEventListener("input", (e) => {
+      counter.textContent = e.target.value.length;
+    });
+
+    document.getElementById("btn-save-business").onclick = () => saveBusinessName();
+    document.getElementById("btn-cancel-business").onclick = () => renderMain();
+  } catch (err) {
+    console.error("❌ Ошибка загрузки профиля:", err);
+    showNotification("❌ Ошибка загрузки");
+    renderMain();
+  }
+
+  updateButtonState();
+}
+
+async function deleteDraft(draftId) {
+  try {
+    const initData = getInitData();
+    console.log("🗑️ Удаляю черновик:", draftId);
+    const r = await fetch("/api/miniapp-delete-draft", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+      },
+      body: JSON.stringify({
+        initData,
+        draftId,
+      }),
+    });
+    const j = await r.json();
+    console.log("✅ Delete draft response:", j);
+
+    if (j.ok) {
+      showNotification("✅ Черновик удалён!");
+      setTimeout(() => {
+        renderDrafts();
+      }, 800);
+    } else {
+      showNotification("❌ Ошибка: " + (j.error || "unknown"));
+    }
+  } catch (err) {
+    console.error("❌ Ошибка удаления:", err);
+    showNotification("❌ Ошибка сети");
+  }
+}
+
+async function saveBusinessName() {
+  const businessName = document.getElementById("business-name-input").value.trim();
+
+  if (!businessName || businessName.length < 2 || businessName.length > 200) {
+    showNotification("❌ Название должно быть от 2 до 200 символов");
+    return;
+  }
+
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = "⏳ Сохранение...";
+
+  try {
+    const initData = getInitData();
+    console.log("📤 Сохраняю названию компании:", businessName);
+    const r = await fetch("/api/miniapp-edit-business", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+      },
+      body: JSON.stringify({
+        initData,
+        businessName,
+      }),
+    });
+    const j = await r.json();
+    console.log("✅ Save business response:", j);
+
+    if (j.ok) {
+      showNotification("✅ Профиль обновлён!");
+      setTimeout(() => {
+        renderMain();
+      }, 800);
+    } else {
+      const msg = j.message || (j.error === "invalid_business_name" ? "Название должно быть от 2 до 200 символов" : "unknown");
+      showNotification("❌ Ошибка: " + msg);
+      btn.disabled = false;
+      btn.textContent = "✅ Сохранить";
+    }
+  } catch (err) {
+    console.error("❌ Ошибка сохранения:", err);
+    showNotification("❌ Ошибка сети");
+    btn.disabled = false;
+    btn.textContent = "✅ Сохранить";
+  }
+}
+
+async function renderEditOrder(orderId) {
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <button class="back-btn" type="button" id="back-from-edit">← Назад</button>
+        <h2>Редактирование заявки</h2>
+      </div>
+      <div id="edit-form-content" style="padding: 16px 0;">
+        <p style="text-align: center; color: var(--secondary-color);">⏳ Загрузка...</p>
+      </div>
+    </div>`;
+  formState.step = "edit-order";
+  document.getElementById("back-from-edit").onclick = () => renderOrderDetail(orderId);
+
+  try {
+    const initData = getInitData();
+    const r = await fetch(`/api/miniapp-order-detail?id=${encodeURIComponent(orderId)}&initData=${encodeURIComponent(initData)}`, {
+      method: "GET",
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      showNotification("❌ Ошибка загрузки заявки");
+      renderOrderDetail(orderId);
+      return;
+    }
+
+    const o = j.order;
+    let html = `
+      <div style="padding: 0 16px;">
+        <form id="edit-order-form">
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 12px; color: var(--secondary-color); margin-bottom: 6px; font-weight: 600;">Товар *</label>
+            <input type="text" id="edit-product" value="${escapeHtml(o.product)}" placeholder="Название товара" 
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--input-bg); color: var(--text-color); font-size: 14px; box-sizing: border-box;">
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 12px; color: var(--secondary-color); margin-bottom: 6px; font-weight: 600;">Количество *</label>
+            <input type="text" id="edit-quantity" value="${escapeHtml(o.quantityText)}" placeholder="Кол-во и единицы (2000 шт)"
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--input-bg); color: var(--text-color); font-size: 14px; box-sizing: border-box;">
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 12px; color: var(--secondary-color); margin-bottom: 6px; font-weight: 600;">ТЗ/условия *</label>
+            <textarea id="edit-tz" placeholder="Технические условия или особенности доставки" 
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--input-bg); color: var(--text-color); font-size: 14px; box-sizing: border-box; min-height: 80px; resize: vertical;">${escapeHtml(o.tz)}</textarea>
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 12px; color: var(--secondary-color); margin-bottom: 6px; font-weight: 600;">Маркетплейс *</label>
+            <select id="edit-marketplace" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--input-bg); color: var(--text-color); font-size: 14px; box-sizing: border-box;">
+              <option value="wb" ${o.marketplace === "wb" ? "selected" : ""}>WB (Wildberries)</option>
+              <option value="ozon" ${o.marketplace === "ozon" ? "selected" : ""}>Ozon</option>
+            </select>
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 12px; color: var(--secondary-color); margin-bottom: 6px; font-weight: 600;">Склад назначения *</label>
+            <select id="edit-warehouse" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--input-bg); color: var(--text-color); font-size: 14px; box-sizing: border-box;">
+              <option>Выберите склад...</option>
+            </select>
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 12px; color: var(--secondary-color); margin-bottom: 6px; font-weight: 600;">Желаемая дата поставки</label>
+            <input type="date" id="edit-delivery-date" value="${o.desiredDeliveryDate || ""}"
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--input-bg); color: var(--text-color); font-size: 14px; box-sizing: border-box;">
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 12px; color: var(--secondary-color); margin-bottom: 6px; font-weight: 600;">Комментарий</label>
+            <textarea id="edit-comment" placeholder="Дополнительная информация..."
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--input-bg); color: var(--text-color); font-size: 14px; box-sizing: border-box; min-height: 60px; resize: vertical;">${escapeHtml(o.comment || "")}</textarea>
+          </div>
+
+          <button type="button" class="btn btn-primary" id="btn-save-edit" style="width: 100%; margin-bottom: 8px;">✅ Сохранить</button>
+          <button type="button" class="btn btn-secondary" id="btn-cancel-edit" style="width: 100%;">✕ Отмена</button>
+        </form>
+      </div>`;
+
+    document.getElementById("edit-form-content").innerHTML = html;
+
+    // Заполняем склады
+    const warehouseSelect = document.getElementById("edit-warehouse");
+    const marketplace = document.getElementById("edit-marketplace").value;
+    updateWarehouseOptions(marketplace, o.warehouseId);
+
+    document.getElementById("edit-marketplace").addEventListener("change", (e) => {
+      updateWarehouseOptions(e.target.value, o.warehouseId);
+    });
+
+    document.getElementById("btn-save-edit").onclick = () => saveOrderEdit(orderId);
+    document.getElementById("btn-cancel-edit").onclick = () => renderOrderDetail(orderId);
+  } catch (err) {
+    console.error("❌ Ошибка загрузки формы редактирования:", err);
+    showNotification("❌ Ошибка загрузки");
+    renderOrderDetail(orderId);
+  }
+
+  updateButtonState();
+}
+
+async function renderDrafts() {
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <button class="back-btn" type="button" id="back-from-drafts">← Назад</button>
+        <h2>Черновики</h2>
+      </div>
+      <div id="drafts-content" style="padding: 16px 0;">
+        <p style="text-align: center; color: var(--secondary-color);">⏳ Загрузка...</p>
+      </div>
+    </div>`;
+  formState.step = "drafts";
+  document.getElementById("back-from-drafts").onclick = () => renderMain();
+
+  try {
+    const initData = getInitData();
+    const r = await fetch(`/api/miniapp-drafts?initData=${encodeURIComponent(initData)}`, {
+      method: "GET",
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      showNotification("❌ Ошибка загрузки черновиков");
+      renderMain();
+      return;
+    }
+
+    const drafts = j.drafts || [];
+    if (drafts.length === 0) {
+      document.getElementById("drafts-content").innerHTML = `
+        <div class="empty-state">
+          <p class="empty-icon">📄</p>
+          <p class="empty-text">Нет черновиков</p>
+          <button class="btn btn-primary" type="button" id="btn-create-from-empty" style="margin-top: 16px;">➕ Создать заявку</button>
+        </div>`;
+      document.getElementById("btn-create-from-empty").onclick = () => checkRegistrationAndProceed();
+      updateButtonState();
+      return;
+    }
+
+    let html = `<div style="padding: 0 16px;">`;
+    for (const d of drafts) {
+      html += `
+        <div style="
+          background: var(--input-bg);
+          border: 1px solid var(--border-color);
+          border-radius: 8px;
+          padding: 12px 16px;
+          margin-bottom: 8px;
+          cursor: pointer;
+        " class="draft-card" data-draft-id="${d.id}">
+          <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+            <div style="flex: 1;">
+              <p style="font-weight: 600; font-size: 14px; margin: 0; color: var(--text-color);">
+                📝 ${escapeHtml(d.product)}
+              </p>
+              <p style="font-size: 12px; color: var(--secondary-color); margin: 4px 0 0 0;">
+                ${d.quantityText} • ${d.marketplace.toUpperCase()}
+              </p>
+            </div>
+            <p style="font-size: 12px; color: var(--secondary-color); margin: 0;">
+              ${new Date(d.updatedAt).toLocaleDateString('ru')}
+            </p>
+          </div>
+        </div>`;
+    }
+    html += `</div>`;
+
+    document.getElementById("drafts-content").innerHTML = html;
+
+    // Привязываем клик на черновики (открывать их можно как заявки)
+    document.querySelectorAll(".draft-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        const draftId = card.dataset.draftId;
+        renderOrderDetail(draftId);
+      });
+    });
+  } catch (err) {
+    console.error("❌ Ошибка загрузки черновиков:", err);
+    showNotification("❌ Ошибка сети");
+    renderMain();
+  }
+
+  updateButtonState();
+}
+
+async function saveOrderEdit(orderId) {
+  const product = document.getElementById("edit-product").value.trim();
+  const quantityText = document.getElementById("edit-quantity").value.trim();
+  const tz = document.getElementById("edit-tz").value.trim();
+  const marketplace = document.getElementById("edit-marketplace").value;
+  const warehouseId = document.getElementById("edit-warehouse").value;
+  const desiredDeliveryDate = document.getElementById("edit-delivery-date").value;
+  const comment = document.getElementById("edit-comment").value.trim();
+
+  if (!product || !quantityText || !tz || !warehouseId) {
+    showNotification("❌ Заполните все обязательные поля");
+    return;
+  }
+
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = "⏳ Сохранение...";
+
+  try {
+    const initData = getInitData();
+    const r = await fetch("/api/miniapp-order-edit", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+      },
+      body: JSON.stringify({
+        initData,
+        orderId,
+        product,
+        quantityText,
+        tz,
+        marketplace,
+        warehouseId,
+        desiredDeliveryDate: desiredDeliveryDate || undefined,
+        comment: comment || undefined,
+      }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      showNotification("✅ Заявка обновлена!");
+      setTimeout(() => {
+        renderOrderDetail(orderId);
+      }, 800);
+    } else {
+      showNotification("❌ Ошибка: " + (j.error || "unknown"));
+      btn.disabled = false;
+      btn.textContent = "✅ Сохранить";
+    }
+  } catch (err) {
+    console.error("❌ Ошибка сохранения:", err);
+    showNotification("❌ Ошибка сети");
+    btn.disabled = false;
+    btn.textContent = "✅ Сохранить";
+  }
+}
+
+function updateWarehouseOptions(marketplace, selectedId) {
+  const warehouseSelect = document.getElementById("edit-warehouse");
+  const warehouses = warehousesForMarketplace(marketplace);
+  warehouseSelect.innerHTML = "";
+  for (const w of warehouses) {
+    const option = document.createElement("option");
+    option.value = w.id;
+    option.textContent = `${w.label} (${w.note})`;
+    if (w.id === selectedId) option.selected = true;
+    warehouseSelect.appendChild(option);
+  }
+}
+
+async function renderOrderList(roleFilter = "client", typeFilter = "all") {
+  const titleMap = {
+    client_all: "Заявки",
+    client_active: "Активные заявки",
+    packer_all: "Заявки на обработку",
+    packer_archive: "Архив",
+    driver_all: "Мои рейсы",
+    driver_archive: "Архив рейсов",
+    staff_all: "Все заявки",
+  };
+  const key = `${roleFilter}_${typeFilter}`;
+  const title = titleMap[key] || "Заявки";
+
   app.innerHTML = `
     <div class="container">
       <div class="header">
         <button class="back-btn" type="button" id="back-from-list">← Назад</button>
-        <h2>Мои заявки</h2>
+        <h2>${title}</h2>
       </div>
-      <div class="empty-state">
-        <p class="empty-icon">📋</p>
-        <p class="empty-text">Список заявок в чате с ботом</p>
-        <p class="empty-subtext">Откройте бота и раздел «Все заявки» — здесь скоро появится синхронизация.</p>
-        <button class="btn btn-primary" type="button" id="btn-create-from-list">Создать заявку</button>
+      <div id="orders-content" style="padding: 16px 0;">
+        <p style="text-align: center; color: var(--secondary-color);">⏳ Загрузка...</p>
       </div>
     </div>`;
   formState.step = "order-list";
   document.getElementById("back-from-list").onclick = () => goToMain();
-  document.getElementById("btn-create-from-list").onclick = () => goToNewOrder();
+
+  try {
+    const initData = getInitData();
+    console.log("📥 Загружаю список заявок...");
+    const r = await fetch(`/api/miniapp-orders-list?initData=${encodeURIComponent(initData)}`, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+      },
+    });
+    const j = await r.json();
+    console.log("✅ Orders list response:", j);
+
+    if (!j.ok) {
+      showNotification("❌ Ошибка загрузки заявок");
+      document.getElementById("orders-content").innerHTML = `
+        <div class="empty-state">
+          <p class="empty-icon">⚠️</p>
+          <p class="empty-text">Ошибка загрузки</p>
+        </div>`;
+      return;
+    }
+
+    const orders = j.orders || {};
+    const allStatuses = Object.keys(orders);
+    
+    if (allStatuses.length === 0) {
+      document.getElementById("orders-content").innerHTML = `
+        <div class="empty-state">
+          <p class="empty-icon">📋</p>
+          <p class="empty-text">Нет заявок</p>
+        </div>`;
+      updateButtonState();
+      return;
+    }
+
+    let html = "";
+    for (const status of allStatuses) {
+      const orderList = orders[status] || [];
+      if (orderList.length === 0) continue;
+
+      html += `<div style="margin-bottom: 24px;">
+        <p style="font-weight: 600; font-size: 14px; color: var(--text-color); margin-bottom: 8px; padding: 0 16px;">
+          ${orderList[0].statusLabel || status} (${orderList.length})
+        </p>`;
+
+      for (const o of orderList) {
+        html += `
+          <div style="
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            margin: 0 16px 8px 16px;
+          " class="order-card" data-order-id="${o.id}">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+              <div style="flex: 1;">
+                <p style="font-weight: 600; font-size: 14px; margin: 0; color: var(--text-color);">
+                  📦 ${escapeHtml(o.product)}
+                </p>
+                <p style="font-size: 12px; color: var(--secondary-color); margin: 4px 0 0 0;">
+                  ${escapeHtml(o.clientUsername)} • ${o.quantityText}
+                </p>
+              </div>
+              <p style="font-size: 12px; color: var(--secondary-color); margin: 0;">
+                №${o.id.substring(0, 8)}
+              </p>
+            </div>
+            <p style="font-size: 12px; color: var(--secondary-color); margin: 0;">
+              ${new Date(o.createdAt).toLocaleDateString('ru')} • ${o.marketplace.toUpperCase()}
+            </p>
+          </div>`;
+      }
+      html += `</div>`;
+    }
+
+    document.getElementById("orders-content").innerHTML = html;
+
+    // Привязываем клик на карточки
+    document.querySelectorAll(".order-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        const orderId = card.dataset.orderId;
+        goToOrderDetail(orderId);
+      });
+    });
+  } catch (err) {
+    console.error("❌ Ошибка загрузки заявок:", err);
+    showNotification("❌ Ошибка сети");
+    document.getElementById("orders-content").innerHTML = `
+      <div class="empty-state">
+        <p class="empty-icon">⚠️</p>
+        <p class="empty-text">Ошибка загрузки</p>
+      </div>`;
+  }
+
   updateButtonState();
 }
 
@@ -953,8 +1567,227 @@ function goToNewOrder() {
   }
 }
 
-function goToOrderList() {
-  renderOrderList();
+function goToOrderList(roleFilter = "client", typeFilter = "all") {
+  renderOrderList(roleFilter, typeFilter);
+}
+
+function goToOrderDetail(orderId) {
+  renderOrderDetail(orderId);
+}
+
+function goToEditOrder(orderId) {
+  renderEditOrder(orderId);
+}
+
+function goToDrafts() {
+  renderDrafts();
+}
+
+function goToEditBusiness() {
+  renderEditBusiness();
+}
+
+async function renderOrderDetail(orderId) {
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <button class="back-btn" type="button" id="back-from-detail">← Назад</button>
+        <h2>Заявка №${orderId.substring(0, 8)}</h2>
+      </div>
+      <div id="order-detail-content" style="padding: 16px 0;">
+        <p style="text-align: center; color: var(--secondary-color);">⏳ Загрузка...</p>
+      </div>
+    </div>`;
+  formState.step = "order-detail";
+  document.getElementById("back-from-detail").onclick = () => renderOrderList(formState.currentRole, "all");
+
+  try {
+    const initData = getInitData();
+    console.log("📥 Загружаю детали заявки:", orderId);
+    const r = await fetch(`/api/miniapp-order-detail?id=${encodeURIComponent(orderId)}&initData=${encodeURIComponent(initData)}`, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+      },
+    });
+    const j = await r.json();
+    console.log("✅ Order detail response:", j);
+
+    if (!j.ok) {
+      showNotification("❌ Ошибка загрузки заявки");
+      renderOrderList(formState.currentRole, "all");
+      return;
+    }
+
+    const o = j.order;
+    let html = `
+      <div style="padding: 0 16px;">
+        <!-- Основная информация -->
+        <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+            <div>
+              <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 4px 0;">Статус</p>
+              <p style="font-size: 16px; font-weight: 600; margin: 0; color: var(--text-color);">${escapeHtml(o.statusLabel)}</p>
+            </div>
+            <div>
+              <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 4px 0;">Дата создания</p>
+              <p style="font-size: 14px; margin: 0; color: var(--text-color);">${new Date(o.createdAt).toLocaleDateString('ru')}</p>
+            </div>
+          </div>
+
+          <div style="padding-top: 12px; border-top: 1px solid var(--border-color);">
+            <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">Товар</p>
+            <p style="font-size: 14px; font-weight: 600; margin: 0; color: var(--text-color);">${escapeHtml(o.product)}</p>
+            <p style="font-size: 12px; color: var(--secondary-color); margin: 4px 0 0 0;">Кол-во: ${escapeHtml(o.quantityText)}</p>
+          </div>
+        </div>
+
+        <!-- Доставка -->
+        <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
+          <p style="font-size: 12px; color: var(--secondary-color); font-weight: 600; margin: 0 0 12px 0;">📦 Доставка</p>
+          <div style="display: grid; gap: 12px;">
+            <div>
+              <p style="font-size: 11px; color: var(--secondary-color); margin: 0 0 4px 0;">Маркетплейс</p>
+              <p style="font-size: 13px; font-weight: 600; margin: 0;">${escapeHtml(o.marketplaceLabel)}</p>
+            </div>
+            <div>
+              <p style="font-size: 11px; color: var(--secondary-color); margin: 0 0 4px 0;">Склад</p>
+              <p style="font-size: 13px; font-weight: 600; margin: 0;">${escapeHtml(o.warehouseName)}</p>
+            </div>
+            <div>
+              <p style="font-size: 11px; color: var(--secondary-color); margin: 0 0 4px 0;">Клиент</p>
+              <p style="font-size: 13px; font-weight: 600; margin: 0;">${escapeHtml(o.clientUsername)}</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Дополнительно -->
+        ${o.desiredDeliveryDate ? `
+        <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
+          <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">📅 Желаемая дата поставки</p>
+          <p style="font-size: 14px; font-weight: 600; margin: 0;">${escapeHtml(o.desiredDeliveryDate)}</p>
+        </div>
+        ` : ""}
+
+        ${o.approvedDeliveryDate ? `
+        <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
+          <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">✅ Утверждённая дата</p>
+          <p style="font-size: 14px; font-weight: 600; margin: 0;">${escapeHtml(o.approvedDeliveryDate)}</p>
+        </div>
+        ` : ""}
+
+        ${o.comment ? `
+        <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
+          <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">💬 Комментарий</p>
+          <p style="font-size: 13px; margin: 0; color: var(--text-color);">${escapeHtml(o.comment)}</p>
+        </div>
+        ` : ""}
+
+        <!-- Действия -->
+        <div id="actions-buttons" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 32px;">
+        </div>
+
+        <!-- Кнопки редактирования (только для клиента с черновиком) -->
+        ${(formState.currentRole === "client" && o.status === "draft") ? `
+        <div style="display: flex; gap: 8px; flex-direction: column;">
+          <button type="button" class="btn btn-primary" id="btn-edit-order" style="flex: 1;">✏️ Редактировать</button>
+          <button type="button" class="btn btn-danger" id="btn-delete-order" style="flex: 1; background: #ff6b6b; color: white;">🗑️ Удалить</button>
+        </div>
+        ` : ""}
+      </div>`;
+
+    document.getElementById("order-detail-content").innerHTML = html;
+
+    // Добавляем кнопки действий
+    const actionsContainer = document.getElementById("actions-buttons");
+    if (o.availableActions && o.availableActions.length > 0) {
+      for (const action of o.availableActions) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn-primary";
+        btn.textContent = getActionLabel(action);
+        btn.onclick = () => executeOrderAction(orderId, action);
+        actionsContainer.appendChild(btn);
+      }
+    }
+
+    // Привязываем кнопки редактирования
+    if (formState.currentRole === "client" && o.status === "draft") {
+      const editBtn = document.getElementById("btn-edit-order");
+      if (editBtn) {
+        editBtn.onclick = () => goToEditOrder(orderId);
+      }
+      const deleteBtn = document.getElementById("btn-delete-order");
+      if (deleteBtn) {
+        deleteBtn.onclick = () => {
+          if (confirm("Вы уверены? Это удалит черновик.")) {
+            deleteDraft(orderId);
+          }
+        };
+      }
+    }
+  } catch (err) {
+    console.error("❌ Ошибка загрузки деталей:", err);
+    showNotification("❌ Ошибка загрузки");
+    renderOrderList(formState.currentRole, "all");
+  }
+
+  updateButtonState();
+}
+
+function getActionLabel(action) {
+  const labels = {
+    start_receiving: "📥 Начать приём",
+    finish_receiving: "✅ Приём завершён",
+    send_to_sort: "📦 Отправить на сортировку",
+    start_delivery: "🚚 Начать доставку",
+    complete_delivery: "✅ Доставка завершена",
+    finalize_order: "✅ Оформить заявку",
+  };
+  return labels[action] || action;
+}
+
+async function executeOrderAction(orderId, action) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = "⏳ Отправка...";
+
+  try {
+    const initData = getInitData();
+    console.log("📤 Выполняю действие:", action, "для заявки:", orderId);
+    const r = await fetch("/api/miniapp-order-status", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+      },
+      body: JSON.stringify({
+        initData,
+        orderId,
+        action,
+      }),
+    });
+    const j = await r.json();
+    console.log("✅ Order status response:", j);
+
+    if (j.ok) {
+      showNotification("✅ Статус обновлён!");
+      setTimeout(() => {
+        renderOrderDetail(orderId);
+      }, 800);
+    } else {
+      showNotification("❌ Ошибка: " + (j.error || "unknown"));
+      btn.disabled = false;
+      btn.textContent = getActionLabel(action);
+    }
+  } catch (err) {
+    console.error("❌ Ошибка выполнения действия:", err);
+    showNotification("❌ Ошибка сети");
+    btn.disabled = false;
+    btn.textContent = getActionLabel(action);
+  }
 }
 
 function validateOrder() {
@@ -1080,7 +1913,10 @@ function showOrderSummary(orderData) {
 
     try {
       const initData = getInitData();
+      const orderData = formState.orderData;
       console.log("📤 Sending create-order request...");
+      console.log("Order data:", orderData);
+      console.log("Desired delivery date:", orderData.desiredDeliveryDate, "type:", typeof orderData.desiredDeliveryDate);
       const r = await fetch("/api/miniapp-create-order", {
         method: "POST",
         cache: "no-store",
@@ -1102,6 +1938,7 @@ function showOrderSummary(orderData) {
         }),
       });
       const j = await r.json();
+      console.log("✅ create-order response:", j, "status:", r.status);
       console.log("✅ create-order response:", j);
       if (j.ok) {
         showNotification("✅ Заявка №" + j.orderId + " создана! Смотрите чат бота.");
@@ -1163,4 +2000,20 @@ function updateButtonState() {
   tg.MainButton.hide();
 }
 
-renderMain();
+// Инициализация при загрузке: загружаем конфиг с сервера
+async function initApp() {
+  try {
+    console.log("🚀 Инициализация приложения...");
+    const cfg = await fetchMiniappConfig();
+    formState.currentRole = cfg.currentRole;
+    formState.registered = cfg.registered;
+    formState.registrationStep = cfg.registrationStep;
+    formState.profileCanSwitchRole = cfg.canSwitchRole;
+    console.log("✅ Инициализация завершена. Роль:", formState.currentRole, "Зарегистрирован:", formState.registered);
+  } catch (err) {
+    console.error("❌ Ошибка инициализации:", err);
+  }
+  renderMain();
+}
+
+initApp();
