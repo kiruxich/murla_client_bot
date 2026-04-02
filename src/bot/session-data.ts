@@ -57,4 +57,6 @@ export type SessionData = {
   editingBusinessName?: boolean;
   packerListSource?: StaffOrdersListSource;
   driverListSource?: StaffOrdersListSource;
+  /** Водитель вводит дату рейса для заявки */
+  dvcDateOrderId?: string;
 };

@@ -33,6 +33,8 @@ export type FulfillmentOrder = {
   delivery: DeliveryPoint;
   /** Желаемая дата поставки (текст от клиента). */
   desiredDeliveryDate?: string;
+  /** Дата рейса, утверждённая водителем (текст: «15.04.2026»). */
+  approvedDeliveryDate?: string;
   /** Шаг 7 — комментарий */
   comment?: string;
   createdAt: number;

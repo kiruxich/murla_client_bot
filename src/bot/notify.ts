@@ -78,3 +78,37 @@ export const notifyDriversWarehouseHandoff = async (
     }
   }
 };
+
+/**
+ * Водитель одобрил дату рейса — уведомляет клиента, менеджера, управляющего.
+ */
+export const notifyApprovedDeliveryDate = async (
+  api: Api,
+  order: FulfillmentOrder,
+  managerTelegramIds: readonly number[],
+  supervisorTelegramIds: readonly number[],
+): Promise<void> => {
+  const text =
+    `📅 <b>Дата рейса утверждена</b>\n` +
+    `Заявка №${order.id}\n` +
+    `Дата: <b>${order.approvedDeliveryDate}</b>\n\n` +
+    formatOrderHtml(order);
+
+  const targets = new Set<number>();
+  targets.add(order.clientTelegramId);
+  for (const id of managerTelegramIds) {
+    targets.add(id);
+  }
+  for (const id of supervisorTelegramIds) {
+    targets.add(id);
+  }
+
+  for (const chatId of targets) {
+    try {
+      await api.sendMessage(chatId, text, { parse_mode: "HTML" });
+      await sleep(40);
+    } catch {
+      // ignore
+    }
+  }
+};

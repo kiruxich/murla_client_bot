@@ -115,6 +115,11 @@ const initSqlite = async (): Promise<void> => {
   } catch {
     /* колонка уже есть */
   }
+  try {
+    db.run("ALTER TABLE orders ADD COLUMN approved_delivery_date TEXT");
+  } catch {
+    /* колонка уже есть */
+  }
   persistDb();
 };
 
@@ -165,6 +170,7 @@ const initPostgres = async (): Promise<void> => {
   await sql`ALTER TABLE clients ADD COLUMN IF NOT EXISTS phone TEXT`;
   await sql`ALTER TABLE clients ADD COLUMN IF NOT EXISTS business_name TEXT`;
   await sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS desired_delivery_date TEXT`;
+  await sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS approved_delivery_date TEXT`;
 };
 
 export const initDb = async (): Promise<void> => {

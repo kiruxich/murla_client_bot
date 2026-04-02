@@ -388,7 +388,135 @@ function goToProfile() {
     </div>`;
   document.getElementById("back-profile-loading").onclick = () => goToMain();
   formState.step = "profile";
-  fetchMiniappConfig().then(renderProfileContent);
+  Promise.all([fetchMiniappConfig(), fetchCalendarOrders()]).then(([cfg, orders]) => {
+    renderProfileContent(cfg, orders);
+  });
+  updateButtonState();
+}
+
+async function fetchCalendarOrders() {
+  try {
+    const initData = tg.initData;
+    if (!initData) return [];
+    const r = await fetch("/api/miniapp-orders?initData=" + encodeURIComponent(initData));
+    if (!r.ok) return [];
+    const j = await r.json();
+    return Array.isArray(j.orders) ? j.orders : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderProfileContent(cfg, orders = []) {
+  const canSwitch = cfg.canSwitchRole;
+  const ordersByDate = {};
+  orders.forEach((o) => {
+    const d = o.approvedDeliveryDate || o.desiredDeliveryDate || "без даты";
+    if (!ordersByDate[d]) ordersByDate[d] = [];
+    ordersByDate[d].push(o);
+  });
+
+  const datesHtml = Object.keys(ordersByDate)
+    .sort()
+    .map(
+      (date) => `
+    <div class="calendar-day">
+      <button class="calendar-date" type="button" data-date="${escapeHtml(date)}">
+        📅 ${escapeHtml(date)}
+        <span class="calendar-count">${ordersByDate[date].length}</span>
+      </button>
+    </div>`,
+    )
+    .join("");
+
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <button class="back-btn" type="button" id="back-from-profile">← Назад</button>
+        <h2>Профиль</h2>
+      </div>
+      <div class="profile-card">
+        <div class="avatar">${escapeHtml(userName.charAt(0).toUpperCase())}</div>
+        <h3>${escapeHtml(userName)}</h3>
+        <p class="profile-id">ID: ${userId}</p>
+        <div class="profile-info">
+          <div class="info-row">
+            <span class="info-label">Статус:</span>
+            <span class="info-value">Активен</span>
+          </div>
+        </div>
+        ${
+          canSwitch
+            ? `<button type="button" class="btn btn-primary" id="btn-switch-role">Сменить роль</button>`
+            : ""
+        }
+        <button type="button" class="btn btn-secondary" id="btn-close-app">Закрыть</button>
+      </div>
+
+      ${
+        orders.length > 0
+          ? `
+      <div class="calendar-section">
+        <h3>📅 Рейсы по датам</h3>
+        <div class="calendar-list">${datesHtml}</div>
+      </div>
+      <div id="date-details" class="date-details" style="display:none;"></div>
+      `
+          : ""
+      }
+    </div>`;
+
+  formState.step = "profile";
+  formState.profileCanSwitchRole = canSwitch;
+  document.getElementById("back-from-profile").onclick = () => goToMain();
+  const closeBtn = document.getElementById("btn-close-app");
+  if (closeBtn) closeBtn.onclick = () => tg.close();
+  const switchBtn = document.getElementById("btn-switch-role");
+  if (switchBtn) {
+    switchBtn.onclick = () => {
+      tg.sendData(JSON.stringify({ action: "switch_role" }));
+      showNotification("Запрос отправлен боту. Смотрите чат.");
+      tg.close();
+    };
+  }
+
+  document.querySelectorAll(".calendar-date").forEach((btn) => {
+    btn.onclick = () => {
+      const date = btn.dataset.date;
+      const ordersForDate = ordersByDate[date] || [];
+      const detailsDiv = document.getElementById("date-details");
+      if (!detailsDiv) return;
+      const itemsHtml = ordersForDate
+        .map(
+          (o) => `
+        <div class="order-item">
+          <div class="order-header">
+            <strong>Заявка №${o.id}</strong>
+            <span class="order-status">${o.status}</span>
+          </div>
+          <div class="order-info">
+            <p><strong>ИП:</strong> ${escapeHtml(o.businessName || "—")}</p>
+            <p><strong>Товар:</strong> ${escapeHtml(o.product)}</p>
+            <p><strong>Кол:</strong> ${escapeHtml(o.quantityText)}</p>
+            ${o.approvedDeliveryDate ? `<p><strong>Дата рейса:</strong> ${escapeHtml(o.approvedDeliveryDate)}</p>` : ""}
+            ${o.desiredDeliveryDate ? `<p><strong>Желаемая дата:</strong> ${escapeHtml(o.desiredDeliveryDate)}</p>` : ""}
+          </div>
+        </div>`,
+        )
+        .join("");
+      detailsDiv.innerHTML = `
+        <div class="details-header">
+          <button type="button" class="back-btn" id="back-from-details">← К рейсам</button>
+          <h3>${escapeHtml(date)}</h3>
+        </div>
+        <div class="orders-list">${itemsHtml}</div>`;
+      detailsDiv.style.display = "block";
+      document.getElementById("back-from-details").onclick = () => {
+        detailsDiv.style.display = "none";
+      };
+    };
+  });
+
   updateButtonState();
 }
 

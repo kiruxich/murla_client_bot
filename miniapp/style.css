@@ -371,6 +371,118 @@ body {
   display: block;
 }
 
+.calendar-section {
+  margin-top: 24px;
+  padding: 16px;
+  background-color: var(--input-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-color);
+}
+
+.calendar-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-color);
+}
+
+.calendar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.calendar-day {
+  display: flex;
+}
+
+.calendar-date {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--text-color);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  flex: 1;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.2s;
+}
+
+.calendar-date:active {
+  background-color: var(--border-color);
+}
+
+.calendar-count {
+  background-color: var(--primary-color);
+  color: white;
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.date-details {
+  margin-top: 16px;
+  padding: 16px;
+  background-color: var(--input-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-color);
+}
+
+.details-header {
+  margin-bottom: 16px;
+}
+
+.orders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.order-item {
+  background-color: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.order-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.order-header strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.order-status {
+  font-size: 11px;
+  background-color: var(--primary-color);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.order-info p {
+  font-size: 13px;
+  color: var(--text-color);
+  margin: 4px 0;
+}
+
+.order-info strong {
+  color: var(--secondary-color);
+  font-weight: 500;
+}
+
 /* === УВЕДОМЛЕНИЯ === */
 .notification {
   position: fixed;

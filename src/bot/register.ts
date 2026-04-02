@@ -44,7 +44,7 @@ import {
 import { escapeHtml, formatDraftSummaryHtml, formatOrderHtml } from "./format.js";
 import { getMiniAppUrl } from "../env.js";
 import { orderListButtonLabel } from "./order-list-label.js";
-import { notifyDriversWarehouseHandoff, notifyOnStatusChange } from "./notify.js";
+import { notifyApprovedDeliveryDate, notifyDriversWarehouseHandoff, notifyOnStatusChange } from "./notify.js";
 import { canShowSwitchRoleInMiniApp } from "../lib/miniapp-role.js";
 
 export type MyContext = Context & SessionFlavor<SessionData>;
@@ -143,6 +143,9 @@ const driverOrderDetailKeyboard = (ctx: MyContext, orderId: string, o: Fulfillme
   const kb = new InlineKeyboard();
   if (o.driverUnloadPending) {
     kb.text("✅ Подтвердить готовность к выгрузке", `o:${orderId}:dvc`).row();
+  }
+  if (o.status === "prep_unload" && !o.approvedDeliveryDate) {
+    kb.text("📅 Утвердить дату рейса", `o:${orderId}:dvc_date`).row();
   }
   if (o.status === "ready_for_unload") {
     kb.text("🚛 В пути", `o:${orderId}:dvt`).row();
@@ -1553,7 +1556,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
   });
 
   /** Работник склада / водитель: действия по заявке */
-  bot.callbackQuery(/^o:(\d+):(pkr|drv|dvc|dvt|dvf)$/, async (ctx) => {
+  bot.callbackQuery(/^o:(\d+):(pkr|drv|dvc|dvc_date|dvt|dvf)$/, async (ctx) => {
     const id = ctx.match[1];
     const act = ctx.match[2];
     const o = await orderStore.get(id);
@@ -1639,6 +1642,27 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
           reply_markup: driverOrderDetailKeyboard(ctx, id, afterDvc!),
         },
       );
+      return;
+    }
+
+    if (act === "dvc_date") {
+      if (ctx.session.role !== "driver") {
+        await ctx.answerCallbackQuery({ text: "Только водитель" });
+        return;
+      }
+      if (o.status !== "prep_unload" || o.approvedDeliveryDate) {
+        await ctx.answerCallbackQuery({ text: "Недоступно" });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await ctx.reply(
+        `📅 <b>Заявка №${id}</b>\n\nУкажите дату рейса одним сообщением (например: <code>15.04.2026</code>).`,
+        {
+          parse_mode: "HTML",
+          reply_markup: kbCancelOnly(),
+        },
+      );
+      ctx.session.dvcDateOrderId = id;
       return;
     }
 
@@ -1862,6 +1886,57 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       } catch {
         // ignore
       }
+      return;
+    }
+
+    /** Водитель вводит дату рейса */
+    if (ctx.session.role === "driver" && ctx.session.dvcDateOrderId) {
+      const orderId = ctx.session.dvcDateOrderId;
+      if (text === "Меню" || text === "« Меню") {
+        ctx.session.dvcDateOrderId = undefined;
+        await sendMainMenu(ctx, "driver");
+        try {
+          await ctx.deleteMessage();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      if (text.length > 200) {
+        await ctx.reply("Укажите дату не длиннее 200 символов.");
+        return;
+      }
+      const dateText = text.trim();
+      ctx.session.dvcDateOrderId = undefined;
+      const updated = await orderStore.setApprovedDeliveryDate(orderId, dateText);
+      if (!updated) {
+        await ctx.reply("Ошибка при сохранении.");
+        return;
+      }
+      await ctx.reply("✅ Дата утверждена!", {
+        reply_markup: { remove_keyboard: true },
+      });
+      const role = ctx.session.role;
+      if (role === "driver") {
+        const list = await orderStore.list();
+        const ready = list.filter((o) => o.status === "ready_for_unload");
+        if (ready.length > 0) {
+          const bn = await getClientDisplayNameForOrderList(ready[0].clientTelegramId);
+          const kb = new InlineKeyboard();
+          ready.slice(0, 20).forEach((o, i) => {
+            kb.text(orderListButtonLabel(bn, i, ORDER_STATUS_LABEL[o.status]), `v:${o.id}`).row();
+          });
+          kb.text("📁 Архив", "menu:driver_archive").row();
+          kb.text("« Меню", "menu:back");
+          await ctx.reply("🚚 <b>Заявки</b>", {
+            parse_mode: "HTML",
+            reply_markup: kb,
+          });
+        } else {
+          await sendMainMenu(ctx, "driver");
+        }
+      }
+      await notifyApprovedDeliveryDate(ctx.api, updated, ROLE_WHITELIST.manager, ROLE_WHITELIST.supervisor);
       return;
     }
 

@@ -33,6 +33,7 @@ type OrderRow = {
   delivery_marketplace: string;
   delivery_warehouse_id: string;
   desired_delivery_date: string | null;
+  approved_delivery_date: string | null;
   comment: string | null;
   created_at: number;
   updated_at: number;
@@ -63,6 +64,9 @@ const rowToOrder = (row: OrderRow): FulfillmentOrder => {
     desiredDeliveryDate: row.desired_delivery_date?.trim()
       ? row.desired_delivery_date.trim()
       : undefined,
+    approvedDeliveryDate: row.approved_delivery_date?.trim()
+      ? row.approved_delivery_date.trim()
+      : undefined,
     comment: row.comment?.trim() ? row.comment : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -89,6 +93,10 @@ const pgRowToOrderRow = (row: Record<string, unknown>): OrderRow => ({
     row.desired_delivery_date === null || row.desired_delivery_date === undefined
       ? null
       : String(row.desired_delivery_date),
+  approved_delivery_date:
+    row.approved_delivery_date === null || row.approved_delivery_date === undefined
+      ? null
+      : String(row.approved_delivery_date),
   comment: row.comment === null || row.comment === undefined ? null : String(row.comment),
   created_at: Number(row.created_at),
   updated_at: Number(row.updated_at),
@@ -125,6 +133,10 @@ const sqliteGetRow = (id: string): OrderRow | undefined => {
       obj.desired_delivery_date === null || obj.desired_delivery_date === undefined
         ? null
         : String(obj.desired_delivery_date),
+    approved_delivery_date:
+      obj.approved_delivery_date === null || obj.approved_delivery_date === undefined
+        ? null
+        : String(obj.approved_delivery_date),
     comment: obj.comment === null || obj.comment === undefined ? null : String(obj.comment),
     created_at: Number(obj.created_at),
     updated_at: Number(obj.updated_at),
@@ -157,9 +169,9 @@ const sqliteInsertOrder = (o: FulfillmentOrder): void => {
     `INSERT INTO orders (
         id, client_telegram_id, client_username, status,
         product, quantity_text, tz, needs_pickup, pickup_points_json,
-        delivery_marketplace, delivery_warehouse_id, desired_delivery_date, comment,
+        delivery_marketplace, delivery_warehouse_id, desired_delivery_date, approved_delivery_date, comment,
         created_at, updated_at, driver_unload_pending, created_by_telegram_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       o.id,
       o.clientTelegramId,
@@ -173,6 +185,7 @@ const sqliteInsertOrder = (o: FulfillmentOrder): void => {
       o.delivery.marketplace,
       o.delivery.warehouseId,
       o.desiredDeliveryDate ?? null,
+      o.approvedDeliveryDate ?? null,
       o.comment ?? null,
       o.createdAt,
       o.updatedAt,
@@ -198,6 +211,7 @@ const sqliteReplaceOrder = (o: FulfillmentOrder): void => {
         delivery_marketplace = ?,
         delivery_warehouse_id = ?,
         desired_delivery_date = ?,
+        approved_delivery_date = ?,
         comment = ?,
         created_at = ?,
         updated_at = ?,
@@ -216,6 +230,7 @@ const sqliteReplaceOrder = (o: FulfillmentOrder): void => {
       o.delivery.marketplace,
       o.delivery.warehouseId,
       o.desiredDeliveryDate ?? null,
+      o.approvedDeliveryDate ?? null,
       o.comment ?? null,
       o.createdAt,
       o.updatedAt,
@@ -249,7 +264,7 @@ const pgInsertOrder = async (o: FulfillmentOrder): Promise<void> => {
     INSERT INTO orders (
       id, client_telegram_id, client_username, status,
       product, quantity_text, tz, needs_pickup, pickup_points_json,
-      delivery_marketplace, delivery_warehouse_id, desired_delivery_date, comment,
+      delivery_marketplace, delivery_warehouse_id, desired_delivery_date, approved_delivery_date, comment,
       created_at, updated_at, driver_unload_pending, created_by_telegram_id
     ) VALUES (
       ${o.id},
@@ -264,6 +279,7 @@ const pgInsertOrder = async (o: FulfillmentOrder): Promise<void> => {
       ${o.delivery.marketplace},
       ${o.delivery.warehouseId},
       ${o.desiredDeliveryDate ?? null},
+      ${o.approvedDeliveryDate ?? null},
       ${o.comment ?? null},
       ${o.createdAt},
       ${o.updatedAt},
@@ -288,6 +304,7 @@ const pgReplaceOrder = async (o: FulfillmentOrder): Promise<void> => {
       delivery_marketplace = ${o.delivery.marketplace},
       delivery_warehouse_id = ${o.delivery.warehouseId},
       desired_delivery_date = ${o.desiredDeliveryDate ?? null},
+      approved_delivery_date = ${o.approvedDeliveryDate ?? null},
       comment = ${o.comment ?? null},
       created_at = ${o.createdAt},
       updated_at = ${o.updatedAt},
@@ -392,6 +409,10 @@ export const orderStore = {
           obj.desired_delivery_date === null || obj.desired_delivery_date === undefined
             ? null
             : String(obj.desired_delivery_date),
+        approved_delivery_date:
+          obj.approved_delivery_date === null || obj.approved_delivery_date === undefined
+            ? null
+            : String(obj.approved_delivery_date),
         comment: obj.comment === null || obj.comment === undefined ? null : String(obj.comment),
         created_at: Number(obj.created_at),
         updated_at: Number(obj.updated_at),
@@ -449,6 +470,10 @@ export const orderStore = {
 
   async setDriverUnloadPending(id: string, pending: boolean): Promise<FulfillmentOrder | undefined> {
     return this.update(id, { driverUnloadPending: pending });
+  },
+
+  async setApprovedDeliveryDate(id: string, date: string): Promise<FulfillmentOrder | undefined> {
+    return this.update(id, { approvedDeliveryDate: date });
   },
 
   async delete(id: string): Promise<boolean> {
