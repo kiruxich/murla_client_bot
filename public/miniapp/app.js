@@ -124,6 +124,36 @@ function getInitData() {
   return data;
 }
 
+// Helper для unified miniapp API
+async function miniappApi(action, method = "GET", body = null) {
+  const initData = getInitData();
+  
+  let url = `/api/miniapp?action=${action}`;
+  let options = {
+    method,
+    headers: { "Content-Type": "application/json" },
+    "no-store": true,
+  };
+
+  if (method === "GET") {
+    if (action === "config" || action === "orders-list" || action === "drafts") {
+      url += `&initData=${encodeURIComponent(initData)}`;
+    } else if (action === "order-detail") {
+      url += `&id=${encodeURIComponent(body?.id || "")}&initData=${encodeURIComponent(initData)}`;
+    } else if (action === "edit-business" && method === "GET") {
+      url += `&initData=${encodeURIComponent(initData)}`;
+    }
+  } else if (method === "POST") {
+    options.body = JSON.stringify({ ...body, initData, action });
+  }
+
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+  return response.json();
+}
+
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -532,7 +562,7 @@ async function renderEditBusiness() {
   try {
     const initData = getInitData();
     console.log("📥 Загружаю профиль компании...");
-    const r = await fetch(`/api/miniapp-edit-business?initData=${encodeURIComponent(initData)}`, {
+    const r = await fetch(`/api/miniapp?action=edit-business?initData=${encodeURIComponent(initData)}`, {
       method: "GET",
       cache: "no-store",
       headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
@@ -593,7 +623,7 @@ async function deleteDraft(draftId) {
   try {
     const initData = getInitData();
     console.log("🗑️ Удаляю черновик:", draftId);
-    const r = await fetch("/api/miniapp-delete-draft", {
+    const r = await fetch("/api/miniapp?action=delete-draft", {
       method: "POST",
       cache: "no-store",
       headers: {
@@ -641,7 +671,7 @@ async function saveBusinessName(event) {
   try {
     const initData = getInitData();
     console.log("📤 Сохраняю названию компании:", businessName);
-    const r = await fetch("/api/miniapp-edit-business", {
+    const r = await fetch("/api/miniapp?action=edit-business", {
       method: "POST",
       cache: "no-store",
       headers: {
@@ -691,7 +721,7 @@ async function renderEditOrder(orderId) {
 
   try {
     const initData = getInitData();
-    const r = await fetch(`/api/miniapp-order-detail?id=${encodeURIComponent(orderId)}&initData=${encodeURIComponent(initData)}`, {
+    const r = await fetch(`/api/miniapp?action=order-detail?id=${encodeURIComponent(orderId)}&initData=${encodeURIComponent(initData)}`, {
       method: "GET",
       cache: "no-store",
       headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
@@ -795,7 +825,7 @@ async function renderDrafts() {
 
   try {
     const initData = getInitData();
-    const r = await fetch(`/api/miniapp-drafts?initData=${encodeURIComponent(initData)}`, {
+    const r = await fetch(`/api/miniapp?action=drafts?initData=${encodeURIComponent(initData)}`, {
       method: "GET",
       cache: "no-store",
       headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
@@ -890,7 +920,7 @@ async function saveOrderEdit(orderId, event) {
 
   try {
     const initData = getInitData();
-    const r = await fetch("/api/miniapp-order-edit", {
+    const r = await fetch("/api/miniapp?action=order-edit", {
       method: "POST",
       cache: "no-store",
       headers: {
@@ -970,7 +1000,7 @@ async function renderOrderList(roleFilter = "client", typeFilter = "all") {
   try {
     const initData = getInitData();
     console.log("📥 Загружаю список заявок...");
-    const r = await fetch(`/api/miniapp-orders-list?initData=${encodeURIComponent(initData)}`, {
+    const r = await fetch(`/api/miniapp?action=orders-list?initData=${encodeURIComponent(initData)}`, {
       method: "GET",
       cache: "no-store",
       headers: {
@@ -1090,23 +1120,14 @@ async function renderOrderList(roleFilter = "client", typeFilter = "all") {
 
 async function fetchMiniappConfig() {
   try {
-    const initData = getInitData();
     const timestamp = Date.now();
-    console.log("🔍 fetchMiniappConfig: initData present, calling API...");
-    const r = await fetch(`/api/miniapp-config?initData=${encodeURIComponent(initData)}&t=${timestamp}`, {
-      method: "GET",
-      cache: "no-store",
-      headers: {
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
-      },
-    });
-    if (!r.ok) {
-      console.error("❌ miniapp-config response not ok:", r.status);
+    console.log("🔍 fetchMiniappConfig: calling unified API...");
+    const r = await miniappApi("config", "GET");
+    if (!r) {
+      console.error("❌ miniapp config response empty");
       return { canSwitchRole: false, currentRole: "client", registered: true, registrationStep: "done" };
     }
-    const j = await r.json();
+    const j = r;
     console.log("✅ miniapp-config result:", j);
     return {
       canSwitchRole: Boolean(j.canSwitchRole),
@@ -1210,7 +1231,7 @@ function showRoleSelector(currentRole) {
     try {
       const initData = getInitData();
       console.log("📤 Sending switch-role request for:", selectedRole);
-      const r = await fetch("/api/miniapp-switch-role", {
+      const r = await fetch("/api/miniapp?action=switch-role", {
         method: "POST",
         cache: "no-store",
         headers: {
@@ -1391,7 +1412,7 @@ function renderRegistration(step) {
       const btn = document.getElementById("reg-accept");
       if (btn) { btn.disabled = true; btn.textContent = "Подождите…"; }
       try {
-        const r = await fetch("/api/miniapp-register", {
+        const r = await fetch("/api/miniapp?action=register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ initData: getInitData(), step: "consent" }),
@@ -1499,7 +1520,7 @@ function renderRegistration(step) {
       const btn = document.getElementById("reg-business-submit");
       if (btn) { btn.disabled = true; btn.textContent = "Подождите…"; }
       try {
-        const r = await fetch("/api/miniapp-register", {
+        const r = await fetch("/api/miniapp?action=register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ initData: getInitData(), step: "business_name", businessName: val }),
@@ -1533,7 +1554,7 @@ function renderRegistration(step) {
 async function submitPhone(phone) {
   const cleaned = phone.replace(/[\s\-()]/g, "");
   try {
-    const r = await fetch("/api/miniapp-register", {
+    const r = await fetch("/api/miniapp?action=register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ initData: getInitData(), step: "phone", phone: cleaned }),
@@ -1635,7 +1656,7 @@ async function renderOrderDetail(orderId) {
   try {
     const initData = getInitData();
     console.log("📥 Загружаю детали заявки:", orderId);
-    const r = await fetch(`/api/miniapp-order-detail?id=${encodeURIComponent(orderId)}&initData=${encodeURIComponent(initData)}`, {
+    const r = await fetch(`/api/miniapp?action=order-detail?id=${encodeURIComponent(orderId)}&initData=${encodeURIComponent(initData)}`, {
       method: "GET",
       cache: "no-store",
       headers: {
@@ -1829,7 +1850,7 @@ async function executeOrderAction(orderId, action, event) {
   try {
     const initData = getInitData();
     console.log("📤 Выполняю действие:", action, "для заявки:", orderId);
-    const r = await fetch("/api/miniapp-order-status", {
+    const r = await fetch("/api/miniapp?action=order-status", {
       method: "POST",
       cache: "no-store",
       headers: {
@@ -1990,7 +2011,7 @@ function showOrderSummary(orderData) {
       console.log("📤 Sending create-order request...");
       console.log("Order data:", orderData);
       console.log("Desired delivery date:", orderData.desiredDeliveryDate, "type:", typeof orderData.desiredDeliveryDate);
-      const r = await fetch("/api/miniapp-create-order", {
+      const r = await fetch("/api/miniapp?action=create-order", {
         method: "POST",
         cache: "no-store",
         headers: {
