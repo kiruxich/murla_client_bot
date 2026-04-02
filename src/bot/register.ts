@@ -536,6 +536,39 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         await ctx.reply("Смена роли недоступна.");
         return;
       }
+      const selectedRoleRaw = typeof obj.selectedRole === "string" ? obj.selectedRole : undefined;
+      const selectedRole = selectedRoleRaw as BotRole | undefined;
+      const isKnownRole =
+        selectedRole !== undefined && (BOT_ROLES as readonly string[]).includes(selectedRole);
+      const isAllowedRole = selectedRole !== undefined && canUseRole(uid, selectedRole);
+
+      if (selectedRole && isKnownRole && isAllowedRole) {
+        const policy = getRoleEntryPolicy(uid);
+        if (policy === "lock_first") {
+          const locked = await getLockedRole(uid);
+          if (locked !== undefined && locked !== selectedRole) {
+            await ctx.reply(
+              `❌ Роль уже закреплена: <b>${roleLabel[locked]}</b>. Смена недоступна.`,
+              { parse_mode: "HTML" },
+            );
+            return;
+          }
+          if (locked === undefined) {
+            await setLockedRole(uid, selectedRole);
+          }
+        }
+
+        ctx.session.role = selectedRole;
+        ctx.session.orderDraft = undefined;
+        ctx.session.editingBusinessName = undefined;
+        await setLastSelectedBotRole(uid, selectedRole);
+        await ctx.reply(`✅ Роль изменена: <b>${roleLabel[selectedRole]}</b>`, {
+          parse_mode: "HTML",
+        });
+        await sendMainMenu(ctx, selectedRole);
+        return;
+      }
+
       ctx.session.role = undefined;
       ctx.session.orderDraft = undefined;
       ctx.session.editingBusinessName = undefined;
@@ -550,7 +583,24 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       return;
     }
 
-    if (ctx.session.role !== "client") {
+    let effectiveRole = ctx.session.role;
+    if (effectiveRole === undefined) {
+      const locked = await getLockedRole(uid);
+      if (locked !== undefined) {
+        effectiveRole = locked;
+      } else {
+        const last = await getLastSelectedBotRole(uid);
+        if (last !== undefined && canUseRole(uid, last)) {
+          effectiveRole = last;
+        }
+      }
+    }
+    if (effectiveRole === undefined) {
+      effectiveRole = "client";
+    }
+    ctx.session.role = effectiveRole;
+
+    if (effectiveRole !== "client") {
       await ctx.reply("Создание заявки из приложения доступно только в роли «Клиент».");
       return;
     }

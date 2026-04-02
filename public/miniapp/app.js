@@ -101,6 +101,28 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function formatDateFromIso(isoDate) {
+  if (!isoDate || typeof isoDate !== "string" || !isoDate.includes("-")) {
+    return "";
+  }
+  const [year, month, day] = isoDate.split("-");
+  if (!year || !month || !day) {
+    return "";
+  }
+  return `${day}.${month}.${year}`;
+}
+
+function formatDateToIso(displayDate) {
+  if (!displayDate || typeof displayDate !== "string" || !displayDate.includes(".")) {
+    return "";
+  }
+  const [day, month, year] = displayDate.split(".");
+  if (!year || !month || !day) {
+    return "";
+  }
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
 function renderPickupRows() {
   const rows = formState.orderData.pickupAddresses;
   return rows
@@ -246,10 +268,14 @@ function renderNewOrder() {
         <div class="form-group">
           <label>Желаемая дата поставки (диапазон)</label>
           <div class="date-range-container">
-            <input type="text" id="date-range-picker" placeholder="Выберите даты (с-по)"
-              value="${escapeHtml(d.desiredDeliveryDate)}" readonly class="date-range-input" />
+            <input type="date" id="date-start-picker" class="date-range-input" />
+            <span class="date-range-separator">—</span>
+            <input type="date" id="date-end-picker" class="date-range-input" />
             <button type="button" class="btn btn-secondary btn-small" id="clear-dates">Очистить</button>
           </div>
+          <p class="info-text small date-range-hint" id="date-range-preview">
+            ${d.desiredDeliveryDate ? `Выбрано: ${escapeHtml(d.desiredDeliveryDate)}` : "Дата не выбрана"}
+          </p>
         </div>
         <div class="form-group">
           <label>Комментарий</label>
@@ -289,37 +315,64 @@ function renderNewOrder() {
     if (t.name === "warehouseId") formState.orderData.warehouseId = t.value;
   });
 
-  // Инициализируем календарь выбора дат
-  const dateInput = document.getElementById("date-range-picker");
-  if (dateInput && window.Litepicker) {
-    new Litepicker({
-      element: dateInput,
-      singleMode: false, // Выбор диапазона
-      startDate: formState.orderData.desiredDeliveryDate ? 
-        moment(formState.orderData.desiredDeliveryDate, "DD.MM.YYYY") : undefined,
-      format: "DD.MM.YYYY",
-      lang: "ru",
-      tooltipText: [" по "],
-      onSelect: (startDate, endDate) => {
-        if (startDate && endDate) {
-          const start = startDate.format("DD.MM.YYYY");
-          const end = endDate.format("DD.MM.YYYY");
-          formState.orderData.desiredDeliveryDate = `${start} - ${end}`;
-          dateInput.value = `${start} - ${end}`;
-        } else if (startDate) {
-          const date = startDate.format("DD.MM.YYYY");
-          formState.orderData.desiredDeliveryDate = date;
-          dateInput.value = date;
-        }
-      },
-    });
+  const dateStartInput = document.getElementById("date-start-picker");
+  const dateEndInput = document.getElementById("date-end-picker");
+  const datePreview = document.getElementById("date-range-preview");
+
+  const storedDate = formState.orderData.desiredDeliveryDate;
+  if (storedDate.includes(" - ")) {
+    const [startDisplay, endDisplay] = storedDate.split(" - ");
+    if (dateStartInput) dateStartInput.value = formatDateToIso(startDisplay.trim());
+    if (dateEndInput) dateEndInput.value = formatDateToIso(endDisplay.trim());
+  } else if (storedDate) {
+    if (dateStartInput) dateStartInput.value = formatDateToIso(storedDate.trim());
+  }
+
+  const syncDatePreview = () => {
+    if (!dateStartInput) {
+      return;
+    }
+    const start = dateStartInput.value ? formatDateFromIso(dateStartInput.value) : "";
+    const end = dateEndInput && dateEndInput.value ? formatDateFromIso(dateEndInput.value) : "";
+
+    if (!start) {
+      formState.orderData.desiredDeliveryDate = "";
+      if (datePreview) datePreview.textContent = "Дата не выбрана";
+      return;
+    }
+
+    if (!end) {
+      formState.orderData.desiredDeliveryDate = start;
+      if (datePreview) datePreview.textContent = `Выбрано: ${start}`;
+      return;
+    }
+
+    const startTime = new Date(dateStartInput.value).getTime();
+    const endTime = new Date(dateEndInput.value).getTime();
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+      return;
+    }
+
+    const normalizedStart = startTime <= endTime ? start : end;
+    const normalizedEnd = startTime <= endTime ? end : start;
+    formState.orderData.desiredDeliveryDate = `${normalizedStart} - ${normalizedEnd}`;
+    if (datePreview) datePreview.textContent = `Выбрано: ${normalizedStart} - ${normalizedEnd}`;
+  };
+
+  if (dateStartInput) {
+    dateStartInput.addEventListener("change", syncDatePreview);
+  }
+  if (dateEndInput) {
+    dateEndInput.addEventListener("change", syncDatePreview);
   }
 
   const clearBtn = document.getElementById("clear-dates");
   if (clearBtn) {
     clearBtn.onclick = () => {
       formState.orderData.desiredDeliveryDate = "";
-      dateInput.value = "";
+      if (dateStartInput) dateStartInput.value = "";
+      if (dateEndInput) dateEndInput.value = "";
+      if (datePreview) datePreview.textContent = "Дата не выбрана";
     };
   }
 
@@ -383,48 +436,6 @@ async function fetchMiniappConfig() {
     console.error("fetchMiniappConfig error:", err);
     return { canSwitchRole: false, currentRole: "client" };
   }
-}
-
-function renderProfileContent(cfg) {
-  const canSwitch = cfg.canSwitchRole;
-  app.innerHTML = `
-    <div class="container">
-      <div class="header">
-        <button class="back-btn" type="button" id="back-from-profile">← Назад</button>
-        <h2>Профиль</h2>
-      </div>
-      <div class="profile-card">
-        <div class="avatar">${escapeHtml(userName.charAt(0).toUpperCase())}</div>
-        <h3>${escapeHtml(userName)}</h3>
-        <p class="profile-id">ID: ${userId}</p>
-        <div class="profile-info">
-          <div class="info-row">
-            <span class="info-label">Статус:</span>
-            <span class="info-value">Активен</span>
-          </div>
-        </div>
-        ${
-          canSwitch
-            ? `<button type="button" class="btn btn-primary" id="btn-switch-role">Сменить роль</button>`
-            : ""
-        }
-        <button type="button" class="btn btn-secondary" id="btn-close-app">Закрыть</button>
-      </div>
-    </div>`;
-  formState.step = "profile";
-  formState.profileCanSwitchRole = canSwitch;
-  document.getElementById("back-from-profile").onclick = () => goToMain();
-  const closeBtn = document.getElementById("btn-close-app");
-  if (closeBtn) closeBtn.onclick = () => tg.close();
-  const switchBtn = document.getElementById("btn-switch-role");
-  if (switchBtn) {
-    switchBtn.onclick = () => {
-      tg.sendData(JSON.stringify({ action: "switch_role" }));
-      showNotification("Запрос отправлен боту. Смотрите чат.");
-      tg.close();
-    };
-  }
-  updateButtonState();
 }
 
 function goToProfile() {
