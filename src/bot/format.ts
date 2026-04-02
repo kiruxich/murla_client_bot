@@ -56,7 +56,7 @@ export const formatOrderHtml = (o: FulfillmentOrder): string => {
   return lines.join("\n");
 };
 
-/** Итог по черновику до создания заявки (шаги 1–6). */
+/** Итог по черновику до создания заявки (шаги 1–7). */
 export const formatDraftSummaryHtml = (d: OrderDraft): string => {
   const proxyBlock =
     d.proxyClientTelegramId !== undefined

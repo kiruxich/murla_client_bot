@@ -31,7 +31,7 @@ export type FulfillmentOrder = {
   pickupPoints: PickupPoint[];
   /** Шаг 5 — куда отвезти */
   delivery: DeliveryPoint;
-  /** Желаемая дата поставки (текст от клиента, например 15.04.2026). */
+  /** Желаемая дата поставки (текст от клиента). */
   desiredDeliveryDate?: string;
   /** Шаг 7 — комментарий */
   comment?: string;

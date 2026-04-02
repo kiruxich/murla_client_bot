@@ -6,8 +6,15 @@ let botInstance: Bot<MyContext> | null = null;
 
 export const getBot = (): Bot<MyContext> => {
   if (!botInstance) {
-    botInstance = new Bot<MyContext>(getBotToken());
-    registerHandlers(botInstance);
+    try {
+      const token = getBotToken();
+      botInstance = new Bot<MyContext>(token);
+      registerHandlers(botInstance);
+      console.log("✅ Бот инициализирован");
+    } catch (err) {
+      console.error("❌ Критическая ошибка инициализации бота:", err);
+      throw err;
+    }
   }
   return botInstance;
 };

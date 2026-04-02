@@ -39,17 +39,12 @@ import type { FulfillmentOrder } from "../domain/order.js";
 import {
   emptyOrderDraft,
   type ClientOrdersListMode,
-  type OrderDraft,
   type SessionData,
 } from "./session-data.js";
 import { escapeHtml, formatDraftSummaryHtml, formatOrderHtml } from "./format.js";
-import { appendOrderDraftMinimap } from "./order-draft-minimap.js";
+import { getMiniAppUrl } from "../env.js";
 import { orderListButtonLabel } from "./order-list-label.js";
 import { notifyDriversWarehouseHandoff, notifyOnStatusChange } from "./notify.js";
-
-/** HTML сообщения черновика + визуальная «миникарта» маршрута. */
-const draftMsg = (bodyHtml: string, draft: OrderDraft | undefined): string =>
-  appendOrderDraftMinimap(bodyHtml, draft);
 
 export type MyContext = Context & SessionFlavor<SessionData>;
 
@@ -180,6 +175,10 @@ const mainMenuKeyboard = (role: BotRole): InlineKeyboard => {
     kb.text("📄 Черновики", "menu:my_drafts").row();
     kb.text("🔄 Активные", "menu:my_active").row();
     kb.text("✏️ Название ИП / магазина", "menu:edit_business");
+    const mini = getMiniAppUrl();
+    if (mini) {
+      kb.row().webApp("📱 Приложение", mini);
+    }
     return withMurlaLinksRow(kb);
   }
   if (role === "packer") {
@@ -590,10 +589,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     ctx.session.orderDraft.step = "proxy_client_id";
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      draftMsg(
-        "📎 Введите <b>Telegram user id</b> клиента (целое число). Например, через @userinfobot.",
-        ctx.session.orderDraft,
-      ),
+      "📎 Введите <b>Telegram user id</b> клиента (целое число). Например, через @userinfobot.",
       { parse_mode: "HTML", reply_markup: kbCancelOnly() },
     );
   });
@@ -610,10 +606,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     await ctx.answerCallbackQuery();
     const cap = await proxyTargetClientCaptionHtml(id);
     await ctx.editMessageText(
-      draftMsg(
-        `📝 <b>Шаг 1/7</b>${cap}\n\nКакой у клиента товар?\n\nНапишите одним сообщением.`,
-        ctx.session.orderDraft,
-      ),
+      `📝 <b>Шаг 1/7</b>${cap}\n\nКакой у клиента товар?\n\nНапишите одним сообщением.`,
       { parse_mode: "HTML", reply_markup: kbCancelOnly() },
     );
   });
@@ -658,7 +651,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       case "quantity":
         d.step = "product";
         d.quantityText = "";
-        await ctx.reply(draftMsg("📝 <b>Шаг 1/7</b>\nКакой у вас товар?\n\nНапишите одним сообщением.", d), {
+        await ctx.reply("📝 <b>Шаг 1/7</b>\nКакой у вас товар?\n\nНапишите одним сообщением.", {
           parse_mode: "HTML",
           reply_markup: kbCancelOnly(),
         });
@@ -666,14 +659,14 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       case "tz":
         d.step = "quantity";
         d.tz = "";
-        await ctx.reply(draftMsg("📝 <b>Шаг 2/7</b>\nКоличество товара (в единицах измерения):", d), {
+        await ctx.reply("📝 <b>Шаг 2/7</b>\nКоличество товара (в единицах измерения):", {
           parse_mode: "HTML",
           reply_markup: kbBackCancel(),
         });
         return;
       case "pickup_decision":
         d.step = "tz";
-        await ctx.reply(draftMsg("📝 <b>Шаг 3/7</b>\nТЗ (техническое задание / условия):", d), {
+        await ctx.reply("📝 <b>Шаг 3/7</b>\nТЗ (техническое задание / условия):", {
           parse_mode: "HTML",
           reply_markup: kbBackCancel(),
         });
@@ -681,14 +674,14 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       case "pick_address":
         if (d.pickupPoints.length > 0) {
           d.step = "pick_after_point";
-          await ctx.editMessageText(draftMsg(MSG_AFTER_PICKUP_ADDED, d), {
+          await ctx.editMessageText(MSG_AFTER_PICKUP_ADDED, {
             parse_mode: "HTML",
             reply_markup: kbPickAfterPoint(),
           });
         } else {
           d.step = "pickup_decision";
           await ctx.editMessageText(
-            draftMsg("📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?", d),
+            "📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?",
             { parse_mode: "HTML", reply_markup: kbPickupDecision() },
           );
         }
@@ -699,13 +692,13 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         }
         if (d.pickupPoints.length === 0) {
           d.step = "pick_address";
-          await ctx.editMessageText(draftMsg(MSG_PICK_ADDRESS_FIRST, d), {
+          await ctx.editMessageText(MSG_PICK_ADDRESS_FIRST, {
             parse_mode: "HTML",
             reply_markup: kbBackCancel(),
           });
         } else {
           d.step = "pick_after_point";
-          await ctx.editMessageText(draftMsg(MSG_AFTER_PICKUP_ADDED, d), {
+          await ctx.editMessageText(MSG_AFTER_PICKUP_ADDED, {
             parse_mode: "HTML",
             reply_markup: kbPickAfterPoint(),
           });
@@ -715,14 +708,14 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         d.deliveryMarketplace = undefined;
         if (d.needsPickup && d.pickupPoints.length > 0) {
           d.step = "pick_after_point";
-          await ctx.editMessageText(draftMsg(MSG_AFTER_PICKUP_ADDED, d), {
+          await ctx.editMessageText(MSG_AFTER_PICKUP_ADDED, {
             parse_mode: "HTML",
             reply_markup: kbPickAfterPoint(),
           });
         } else {
           d.step = "pickup_decision";
           await ctx.editMessageText(
-            draftMsg("📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?", d),
+            "📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?",
             { parse_mode: "HTML", reply_markup: kbPickupDecision() },
           );
         }
@@ -734,7 +727,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         }
         d.step = "desired_delivery_date";
         d.comment = "";
-        await ctx.editMessageText(draftMsg(MSG_DESIRED_DELIVERY_DATE, d), {
+        await ctx.editMessageText(MSG_DESIRED_DELIVERY_DATE, {
           parse_mode: "HTML",
           reply_markup: kbDesiredDate(),
         });
@@ -756,7 +749,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
           kb.text("« Назад", "draft:dm_back").row();
           kb.text("« Отмена", "menu:back");
           await ctx.editMessageText(
-            draftMsg(`📍 <b>Куда везти — ${MARKETPLACE_LABEL[mp]}</b>\nВыберите склад назначения:`, d),
+            `📍 <b>Куда везти — ${MARKETPLACE_LABEL[mp]}</b>\nВыберите склад назначения:`,
             { parse_mode: "HTML", reply_markup: kb },
           );
         }
@@ -764,10 +757,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       case "confirm":
         d.step = "comment";
         await ctx.editMessageText(
-          draftMsg(
-            "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
-            d,
-          ),
+          "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
           {
             parse_mode: "HTML",
             reply_markup: new InlineKeyboard()
@@ -801,10 +791,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     ctx.session.editingBusinessName = undefined;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      draftMsg(
-        "📝 <b>Шаг 1/7</b>\nКакой у вас товар?\n\nНапишите одним сообщением.",
-        ctx.session.orderDraft,
-      ),
+      "📝 <b>Шаг 1/7</b>\nКакой у вас товар?\n\nНапишите одним сообщением.",
       { parse_mode: "HTML", reply_markup: kbCancelOnly() },
     );
   });
@@ -845,7 +832,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     d.pickupPoints = [];
     d.step = "pick_address";
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(draftMsg(MSG_PICK_ADDRESS_FIRST, d), {
+    await ctx.editMessageText(MSG_PICK_ADDRESS_FIRST, {
       parse_mode: "HTML",
       reply_markup: kbBackCancel(),
     });
@@ -868,10 +855,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     }
     kbDeliveryMarketplaceFooter(kb);
     await ctx.editMessageText(
-      draftMsg(
-        "🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс, <b>куда нужно отвезти</b> товар:",
-        d,
-      ),
+      "🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс, <b>куда нужно отвезти</b> товар:",
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
@@ -884,7 +868,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     }
     d.step = "pick_address";
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(draftMsg(MSG_PICK_ADDRESS_NEXT, d), {
+    await ctx.editMessageText(MSG_PICK_ADDRESS_NEXT, {
       parse_mode: "HTML",
       reply_markup: kbBackCancel(),
     });
@@ -909,7 +893,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     }
     kbDeliveryMarketplaceFooter(kb);
     await ctx.editMessageText(
-      draftMsg("🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс, <b>куда отвезти</b> товар:", d),
+      "🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс, <b>куда отвезти</b> товар:",
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
@@ -932,7 +916,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     kb.text("« Назад", "draft:dm_back").row();
     kb.text("« Отмена", "menu:back");
     await ctx.editMessageText(
-      draftMsg(`📍 <b>Куда везти — ${MARKETPLACE_LABEL[mp]}</b>\nВыберите склад назначения:`, d),
+      `📍 <b>Куда везти — ${MARKETPLACE_LABEL[mp]}</b>\nВыберите склад назначения:`,
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
@@ -951,7 +935,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       kb.text(MARKETPLACE_LABEL[m], `dm:${m}`).row();
     }
     kbDeliveryMarketplaceFooter(kb);
-    await ctx.editMessageText(draftMsg("🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс для доставки:", d), {
+    await ctx.editMessageText("🚚 <b>Шаг 5/7</b>\nВыберите маркетплейс для доставки:", {
       parse_mode: "HTML",
       reply_markup: kb,
     });
@@ -971,7 +955,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     d.delivery = { marketplace: d.deliveryMarketplace, warehouseId: wid };
     d.step = "desired_delivery_date";
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(draftMsg(MSG_DESIRED_DELIVERY_DATE, d), {
+    await ctx.editMessageText(MSG_DESIRED_DELIVERY_DATE, {
       parse_mode: "HTML",
       reply_markup: kbDesiredDate(),
     });
@@ -993,10 +977,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       .row()
       .text("« Отмена", "menu:back");
     await ctx.editMessageText(
-      draftMsg(
-        "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
-        d,
-      ),
+      "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
@@ -1011,7 +992,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     d.step = "confirm";
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      draftMsg(`${formatDraftSummaryHtml(d)}\n\nПодтвердите создание черновика заявки.`, d),
+      `${formatDraftSummaryHtml(d)}\n\nПодтвердите создание черновика заявки.`,
       { parse_mode: "HTML", reply_markup: kbConfirmDraft() },
     );
   });
@@ -1781,10 +1762,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       d.step = "product";
       const cap = await proxyTargetClientCaptionHtml(id);
       await ctx.reply(
-        draftMsg(
-          `📝 <b>Шаг 1/7</b>${cap}\n\nКакой у клиента товар?\n\nНапишите одним сообщением.`,
-          d,
-        ),
+        `📝 <b>Шаг 1/7</b>${cap}\n\nКакой у клиента товар?\n\nНапишите одним сообщением.`,
         { parse_mode: "HTML", reply_markup: kbCancelOnly() },
       );
       return;
@@ -1800,7 +1778,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       }
       d.product = text;
       d.step = "quantity";
-      await ctx.reply(draftMsg("📝 <b>Шаг 2/7</b>\nКоличество товара (в единицах измерения):", d), {
+      await ctx.reply("📝 <b>Шаг 2/7</b>\nКоличество товара (в единицах измерения):", {
         parse_mode: "HTML",
         reply_markup: kbBackCancel(),
       });
@@ -1812,7 +1790,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       }
       d.quantityText = text;
       d.step = "tz";
-      await ctx.reply(draftMsg("📝 <b>Шаг 3/7</b>\nТЗ (техническое задание / условия):", d), {
+      await ctx.reply("📝 <b>Шаг 3/7</b>\nТЗ (техническое задание / условия):", {
         parse_mode: "HTML",
         reply_markup: kbBackCancel(),
       });
@@ -1825,7 +1803,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       d.tz = text;
       d.step = "pickup_decision";
       await ctx.reply(
-        draftMsg("📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?", d),
+        "📝 <b>Шаг 4/7</b>\nНужен ли <b>забор товара</b> (со своей точки)?",
         {
           parse_mode: "HTML",
           reply_markup: kbPickupDecision(),
@@ -1839,7 +1817,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       }
       d.pickupPoints.push({ addressText: text });
       d.step = "pick_after_point";
-      await ctx.reply(draftMsg(MSG_AFTER_PICKUP_ADDED, d), {
+      await ctx.reply(MSG_AFTER_PICKUP_ADDED, {
         parse_mode: "HTML",
         reply_markup: kbPickAfterPoint(),
       });
@@ -1862,10 +1840,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
         .row()
         .text("« Отмена", "menu:back");
       await ctx.reply(
-        draftMsg(
-          "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
-          d,
-        ),
+        "💬 <b>Шаг 7/7</b>\nКомментарий (при необходимости).\n\nИли нажмите «Пропустить».",
         { parse_mode: "HTML", reply_markup: kb },
       );
       return;
@@ -1874,7 +1849,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       d.comment = text;
       d.step = "confirm";
       await ctx.reply(
-        draftMsg(`${formatDraftSummaryHtml(d)}\n\nПодтвердите создание черновика заявки.`, d),
+        `${formatDraftSummaryHtml(d)}\n\nПодтвердите создание черновика заявки.`,
         { parse_mode: "HTML", reply_markup: kbConfirmDraft() },
       );
       return;

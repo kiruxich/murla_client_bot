@@ -34,15 +34,64 @@ pnpm dev
 
 ## Vercel (webhook)
 
+**📖 Полная инструкция:** см. [`WEBHOOK_SETUP.md`](./WEBHOOK_SETUP.md)
+
 1. Задеплойте проект; URL функции: `https://<project>.vercel.app/api/telegram`.
-2. Установите **`BOT_TOKEN`** (прод), **`POSTGRES_URL` / `DATABASE_URL`** при необходимости, **`WHITELIST_BYPASS`** — по ситуации. Не включайте **`USE_DEV_BOT`** на проде.
+2. Установите **`BOT_TOKEN`** (прод) в Vercel Settings. **Не включайте `USE_DEV_BOT`** на проде!
 3. Установите webhook:
 
+```bash
+node scripts/check-webhook.mjs <BOT_TOKEN> https://<project>.vercel.app/api/telegram
+```
+
+Или вручную:
 ```text
 https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https%3A%2F%2F<project>.vercel.app%2Fapi%2Ftelegram
 ```
 
-На serverless **сессии и заявки не разделяются между инстансами** — для прод лучше VPS с long polling или общее хранилище (Redis/Postgres). Для мока и тестов Vercel допустим с ограничениями.
+**Если бот не отвечает на проде:**
+- Проверьте webhook: `node scripts/diagnose-prod.mjs`
+- Смотрите логи: `vercel logs <project> --follow`
+- Читайте [`PROD_DEBUG.md`](./PROD_DEBUG.md) для отладки
+
+На serverless **сессии и заявки не разделяются между инстансами** — для прод рекомендуется подключить **POSTGRES_URL** (Neon) для хранения данных.
+
+### Telegram Mini App (полнофункциональное приложение)
+
+1. **Структура:**
+   - **`public/miniapp/`** — статические файлы (HTML, CSS, JS) для Vercel
+   - **`miniapp/`** — те же файлы для локальной разработки (синхронизируются вручную)
+
+2. **Что входит:**
+   - Главное меню (новая заявка, список, профиль)
+   - Форма создания заявки с валидацией
+   - Профиль пользователя
+   - Автоматическое подстраивание под тему (свет/тёмный режим)
+   - Отправка данных боту через `tg.sendData()`
+
+3. **Настройка в @BotFather:**
+   - Откройте **@BotFather** → выберите бота → **Bot Settings** → **Menu Button** → **Web App**
+   - URL: `https://<ваш-проект>.vercel.app/miniapp/` (на проде) или локальный URL
+   - Сохраните
+
+4. **Обработка данных в боте:**
+   - Mini App отправляет JSON через `sendData()`, который попадает как `web_app_data` в обновление от Telegram
+   - Обработка в `src/bot/register.ts` через middleware
+
+5. **Локальная разработка:**
+   - Откройте бота в Telegram, нажмите **Menu Button** → **Приложение**
+   - Форма работает через Telegram WebApp SDK
+   - Данные отправляются на webhook бота
+
+6. **Развертывание:**
+   - После `vercel deploy` Mini App доступна по URL выше
+   - Не забудьте обновить URL в @BotFather после первого деплоя
+
+### Аналитика на Vercel (Web Analytics + Speed Insights)
+
+1. В [дашборде Vercel](https://vercel.com/dashboard) откройте проект → **Analytics** → включите **Web Analytics** и при необходимости **Speed Insights** (после следующего деплоя появятся маршруты `/_vercel/insights/*` и т.п.).
+2. В **`public/index.html`** и **`public/miniapp/index.html`** уже подключены официальные сниппеты (просмотры страниц и метрики скорости). Локально скрипты с `/_vercel/...` могут отдавать 404 — это нормально.
+3. Статистика по **вызовам** `POST /api/telegram` смотрится в проекте → **Observability** / **Functions** (это не Web Analytics, а логи serverless).
 
 ## Конфиги в коде
 

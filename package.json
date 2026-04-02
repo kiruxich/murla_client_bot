@@ -2,8 +2,10 @@
   "name": "murla_client_bot",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.30.3",
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "pnpm": ">=10"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
