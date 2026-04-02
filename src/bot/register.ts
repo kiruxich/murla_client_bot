@@ -45,8 +45,12 @@ import { escapeHtml, formatDraftSummaryHtml, formatOrderHtml } from "./format.js
 import { getMiniAppUrl } from "../env.js";
 import { orderListButtonLabel } from "./order-list-label.js";
 import { notifyDriversWarehouseHandoff, notifyOnStatusChange } from "./notify.js";
+import { canShowSwitchRoleInMiniApp } from "../lib/miniapp-role.js";
 
 export type MyContext = Context & SessionFlavor<SessionData>;
+
+const isMarketplaceId = (v: unknown): v is MarketplaceId =>
+  typeof v === "string" && (MARKETPLACES as readonly string[]).includes(v);
 
 const roleLabel: Record<BotRole, string> = {
   client: "Клиент",
@@ -503,6 +507,122 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     ctx.session.orderDraft = undefined;
     ctx.session.editingBusinessName = undefined;
     await ctx.reply("Черновик заявки сброшен. /start — меню.");
+  });
+
+  /** Данные из Telegram Mini App (`sendData`). */
+  bot.on("message:web_app_data", async (ctx) => {
+    const uid = ctx.from?.id;
+    const raw = ctx.message?.web_app_data?.data;
+    if (uid === undefined || raw === undefined) {
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      await ctx.reply("Некорректные данные из приложения.");
+      return;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return;
+    }
+    const obj = parsed as Record<string, unknown>;
+
+    if (obj.action === "switch_role") {
+      if (!(await canShowSwitchRoleInMiniApp(uid))) {
+        await ctx.reply("Смена роли недоступна.");
+        return;
+      }
+      ctx.session.role = undefined;
+      ctx.session.orderDraft = undefined;
+      ctx.session.editingBusinessName = undefined;
+      await ctx.reply("Выберите роль:", {
+        parse_mode: "HTML",
+        reply_markup: roleSelectKeyboard(uid),
+      });
+      return;
+    }
+
+    if (typeof obj.product !== "string") {
+      return;
+    }
+
+    if (ctx.session.role !== "client") {
+      await ctx.reply("Создание заявки из приложения доступно только в роли «Клиент».");
+      return;
+    }
+
+    const product = obj.product.trim();
+    const quantityText = String(obj.quantity ?? "").trim();
+    const tz = String(obj.tz ?? "").trim();
+    const needsPickup = Boolean(obj.needsPickup);
+    const marketplace = obj.marketplace;
+    const warehouseId = String(obj.warehouseId ?? "").trim();
+    const desiredDeliveryDate = String(obj.desiredDeliveryDate ?? "").trim();
+    const comment = String(obj.comment ?? "").trim();
+
+    if (!product || !quantityText || !tz) {
+      await ctx.reply("Заполните товар, количество и ТЗ.");
+      return;
+    }
+    if (!isMarketplaceId(marketplace)) {
+      await ctx.reply("Укажите маркетплейс (WB или Ozon).");
+      return;
+    }
+    const wh = findWarehouseById(warehouseId);
+    if (!wh || wh.marketplace !== marketplace) {
+      await ctx.reply("Выберите корректный склад.");
+      return;
+    }
+    let pickupPoints: { addressText: string }[] = [];
+    if (needsPickup) {
+      const addrs = obj.pickupAddresses;
+      if (!Array.isArray(addrs)) {
+        await ctx.reply("Укажите хотя бы один адрес забора.");
+        return;
+      }
+      pickupPoints = addrs
+        .filter((a): a is string => typeof a === "string" && a.trim().length > 0)
+        .map((a) => ({ addressText: a.trim() }));
+      if (pickupPoints.length === 0) {
+        await ctx.reply("Укажите хотя бы один адрес забора.");
+        return;
+      }
+    }
+
+    const delivery = { marketplace, warehouseId };
+
+    let order: FulfillmentOrder;
+    try {
+      order = await orderStore.create({
+        clientTelegramId: uid,
+        clientUsername: ctx.from?.username,
+        product,
+        quantityText,
+        tz,
+        needsPickup,
+        pickupPoints: needsPickup ? pickupPoints : [],
+        delivery,
+        desiredDeliveryDate: desiredDeliveryDate || undefined,
+        comment: comment || undefined,
+      });
+    } catch (err) {
+      console.error("web_app_data order create", err);
+      await ctx.reply("Не удалось создать заявку. Попробуйте ещё раз.");
+      return;
+    }
+
+    await notifyOnStatusChange(ctx.api, order, "draft");
+
+    const kb = new InlineKeyboard();
+    kb.text("📤 Отправить в работу", `o:${order.id}:send`).row();
+    kb.text("« Меню", "menu:back");
+    await ctx.reply(
+      `✅ <b>Черновик №${order.id}</b> создан из приложения.\n\n` +
+        formatOrderHtml(order) +
+        "\n\nНажмите «Отправить в работу», чтобы статус стал «Принято в работу».",
+      { parse_mode: "HTML", reply_markup: kb },
+    );
   });
 
   /** Главное меню без лишнего текста в чате: сообщение с командой удаляется после ответа. */

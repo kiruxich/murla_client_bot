@@ -76,7 +76,8 @@ https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https%3A%2F%2F<project>.v
 
 4. **Обработка данных в боте:**
    - Mini App отправляет JSON через `sendData()`, который попадает как `web_app_data` в обновление от Telegram
-   - Обработка в `src/bot/register.ts` через middleware
+   - Обработка в `src/bot/register.ts` (обработчик `message:web_app_data`: заявка и `action: switch_role`)
+   - Кнопка «Сменить роль» в профиле: `GET /api/miniapp-config?initData=...` → `{ canSwitchRole }` (подпись `initData` проверяется на сервере)
 
 5. **Локальная разработка:**
    - Откройте бота в Telegram, нажмите **Menu Button** → **Приложение**

@@ -2,6 +2,9 @@
   "functions": {
     "api/telegram.ts": {
       "maxDuration": 30
+    },
+    "api/miniapp-config.ts": {
+      "maxDuration": 10
     }
   }
 }
