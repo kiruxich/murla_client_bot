@@ -42,29 +42,28 @@ document.documentElement.style.setProperty("--input-bg", colors.inputBg);
 
 /** Склады WB / Ozon (как в warehouses.ts) */
 const WB_WAREHOUSES = [
-  { id: "wb_koledino", label: "Коледино", note: "Подольск, Московская обл." },
-  { id: "wb_sofino", label: "Софьино", note: "МО, технопарк Софьино" },
+  { id: "wb_koledino", label: "Коледино", note: "Подольск" },
   { id: "wb_elektrostal", label: "Электросталь", note: "Московская обл." },
-  { id: "wb_podolsk", label: "Подольск", note: "Московская обл." },
-  { id: "wb_kazan", label: "Казань", note: "Респ. Татарстан" },
-  { id: "wb_krasnodar", label: "Краснодар", note: "Краснодарский край" },
-  { id: "wb_ekb", label: "Екатеринбург", note: "Свердловская обл." },
-  { id: "wb_novosibirsk", label: "Новосибирск", note: "Новосибирская обл." },
-  { id: "wb_spb_shushary", label: "Шушары", note: "Санкт-Петербург / ЛО" },
-  { id: "wb_habarovsk", label: "Хабаровск", note: "Хабаровский край" },
+  { id: "wb_ryazan", label: "Рязань", note: "Рязанская обл." },
+  { id: "wb_tula", label: "Тула (Алексин)", note: "Тульская обл." },
+  { id: "wb_podolsk_4", label: "Подольск-4", note: "Московская обл." },
+  { id: "wb_obukhovo", label: "Обухово", note: "Московская обл." },
+  { id: "wb_kotovsk", label: "Котовск", note: "Тамбовская обл." },
+  { id: "wb_chehov", label: "Чехов-1", note: "Московская обл." },
+  { id: "wb_belaya_dacha", label: "Белая дача", note: "Московская обл." },
 ];
 
 const OZON_WAREHOUSES = [
-  { id: "ozon_sofino", label: "Софьино", note: "МО, технопарк Софьино" },
-  { id: "ozon_habarovsk", label: "Хабаровск", note: "Хабаровский край" },
-  { id: "ozon_kazan", label: "Казань", note: "Респ. Татарстан" },
-  { id: "ozon_krasnodar", label: "Краснодар", note: "Краснодарский край" },
-  { id: "ozon_rostov", label: "Ростов-на-Дону", note: "Ростовская обл." },
-  { id: "ozon_ekb", label: "Екатеринбург", note: "Свердловская обл." },
-  { id: "ozon_novosibirsk", label: "Новосибирск", note: "Новосибирская обл." },
-  { id: "ozon_spb", label: "Санкт-Петербург", note: "ЛО / СПб" },
-  { id: "ozon_tver", label: "Тверь", note: "Тверская обл." },
+  { id: "ozon_grivno", label: "Гривно", note: "Московская обл." },
   { id: "ozon_domodedovo", label: "Домодедово", note: "Московская обл." },
+  { id: "ozon_noginsk", label: "Ногинск", note: "Московская обл." },
+  { id: "ozon_pushkino", label: "Пушкино", note: "Московская обл." },
+  { id: "ozon_sofino", label: "Софьино", note: "МО" },
+  { id: "ozon_zhukovskiy", label: "Жуковский", note: "Московская обл." },
+  { id: "ozon_pavlovskaya", label: "Павловская слобода", note: "Московская обл." },
+  { id: "ozon_petrovskoe", label: "Петровское", note: "Московская обл." },
+  { id: "ozon_khoruzhino", label: "Хорухино", note: "Московская обл." },
+  { id: "ozon_radumlja", label: "Радумля", note: "Московская обл." },
 ];
 
 const warehousesForMarketplace = (m) => (m === "wb" ? WB_WAREHOUSES : m === "ozon" ? OZON_WAREHOUSES : []);
@@ -177,10 +176,13 @@ function renderNewOrder() {
   const whList = warehousesForMarketplace(m);
   const whOpts = whList
     .map(
-      (w) =>
-        `<option value="${escapeHtml(w.id)}" ${d.warehouseId === w.id ? "selected" : ""}>${escapeHtml(w.label)}${
+      (w) => {
+        const isWb = m === "wb";
+        const className = isWb ? "warehouse-option wb-warehouse" : "warehouse-option ozon-warehouse";
+        return `<option value="${escapeHtml(w.id)}" ${d.warehouseId === w.id ? "selected" : ""} class="${className}">${escapeHtml(w.label)}${
           w.note ? " — " + escapeHtml(w.note) : ""
-        }</option>`,
+        }</option>`;
+      },
     )
     .join("");
 
@@ -323,15 +325,18 @@ function renderOrderList() {
 async function fetchMiniappConfig() {
   const initData = tg.initData;
   if (!initData) {
-    return { canSwitchRole: false };
+    return { canSwitchRole: false, currentRole: "client" };
   }
   try {
     const r = await fetch("/api/miniapp-config?initData=" + encodeURIComponent(initData));
-    if (!r.ok) return { canSwitchRole: false };
+    if (!r.ok) return { canSwitchRole: false, currentRole: "client" };
     const j = await r.json();
-    return { canSwitchRole: Boolean(j.canSwitchRole) };
+    return {
+      canSwitchRole: Boolean(j.canSwitchRole),
+      currentRole: j.currentRole || "client",
+    };
   } catch {
-    return { canSwitchRole: false };
+    return { canSwitchRole: false, currentRole: "client" };
   }
 }
 
@@ -389,7 +394,7 @@ function goToProfile() {
   document.getElementById("back-profile-loading").onclick = () => goToMain();
   formState.step = "profile";
   Promise.all([fetchMiniappConfig(), fetchCalendarOrders()]).then(([cfg, orders]) => {
-    renderProfileContent(cfg, orders);
+    renderProfileContent(cfg, orders, cfg.currentRole);
   });
   updateButtonState();
 }
@@ -407,7 +412,60 @@ async function fetchCalendarOrders() {
   }
 }
 
-function renderProfileContent(cfg, orders = []) {
+const ROLES = [
+  { id: "client", label: "👤 Клиент" },
+  { id: "packer", label: "📦 Работник склада" },
+  { id: "driver", label: "🚚 Водитель" },
+  { id: "manager", label: "📊 Менеджер" },
+  { id: "supervisor", label: "👨‍💼 Управляющий" },
+];
+
+function showRoleSelector(currentRole) {
+  const rolesHtml = ROLES.map(
+    (r) => `
+    <button type="button" class="role-option ${currentRole === r.id ? "role-selected" : ""}" data-role="${r.id}">
+      ${r.label}
+      ${currentRole === r.id ? " ✓" : ""}
+    </button>`,
+  ).join("");
+
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <button class="back-btn" type="button" id="back-from-roles">← Назад</button>
+        <h2>Выбор роли</h2>
+      </div>
+      <div class="role-selector">
+        <p class="role-info">Выберите роль и нажмите «Подтвердить»</p>
+        <div class="roles-list">${rolesHtml}</div>
+        <button type="button" class="btn btn-primary" id="confirm-role" style="margin-top: 16px;">Подтвердить</button>
+        <button type="button" class="btn btn-secondary" id="cancel-role" style="margin-top: 8px;">Отмена</button>
+      </div>
+    </div>`;
+
+  formState.step = "role-selector";
+  let selectedRole = currentRole;
+
+  document.getElementById("back-from-roles").onclick = () => goToProfile();
+  document.getElementById("cancel-role").onclick = () => goToProfile();
+
+  document.querySelectorAll(".role-option").forEach((btn) => {
+    btn.onclick = () => {
+      document.querySelectorAll(".role-option").forEach((b) => b.classList.remove("role-selected"));
+      btn.classList.add("role-selected");
+      selectedRole = btn.dataset.role;
+    };
+  });
+
+  document.getElementById("confirm-role").onclick = () => {
+    showNotification("🔄 Смена роли...");
+    tg.sendData(JSON.stringify({ action: "switch_role", selectedRole }));
+  };
+
+  updateButtonState();
+}
+
+function renderProfileContent(cfg, orders = [], currentRole = "client") {
   const canSwitch = cfg.canSwitchRole;
   const ordersByDate = {};
   orders.forEach((o) => {
@@ -441,6 +499,10 @@ function renderProfileContent(cfg, orders = []) {
         <p class="profile-id">ID: ${userId}</p>
         <div class="profile-info">
           <div class="info-row">
+            <span class="info-label">Текущая роль:</span>
+            <span class="info-value">${ROLES.find((r) => r.id === currentRole)?.label || currentRole}</span>
+          </div>
+          <div class="info-row">
             <span class="info-label">Статус:</span>
             <span class="info-value">Активен</span>
           </div>
@@ -468,15 +530,14 @@ function renderProfileContent(cfg, orders = []) {
 
   formState.step = "profile";
   formState.profileCanSwitchRole = canSwitch;
+  formState.currentRole = currentRole;
   document.getElementById("back-from-profile").onclick = () => goToMain();
   const closeBtn = document.getElementById("btn-close-app");
   if (closeBtn) closeBtn.onclick = () => tg.close();
   const switchBtn = document.getElementById("btn-switch-role");
   if (switchBtn) {
     switchBtn.onclick = () => {
-      tg.sendData(JSON.stringify({ action: "switch_role" }));
-      showNotification("Запрос отправлен боту. Смотрите чат.");
-      tg.close();
+      showRoleSelector(currentRole);
     };
   }
 
@@ -576,22 +637,104 @@ function submitOrder() {
     timestamp: new Date().toISOString(),
   };
 
-  tg.sendData(JSON.stringify(orderData));
-  showNotification("✅ Заявка отправлена боту");
+  showOrderSummary(orderData);
+}
 
-  formState.orderData = {
-    product: "",
-    quantity: "",
-    tz: "",
-    needsPickup: false,
-    marketplace: "",
-    warehouseId: "",
-    pickupAddresses: [""],
-    desiredDeliveryDate: "",
-    comment: "",
+function showOrderSummary(orderData) {
+  const pickupList = orderData.pickupAddresses.length > 0
+    ? `<div class="summary-section">
+        <strong>📍 Точки забора:</strong>
+        ${orderData.pickupAddresses.map((a) => `<p>• ${escapeHtml(a)}</p>`).join("")}
+      </div>`
+    : "";
+
+  const whLabel = OZON_WAREHOUSES.concat(WB_WAREHOUSES).find((w) => w.id === orderData.warehouseId)?.label || orderData.warehouseId;
+
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <h2>✅ Подтверждение заявки</h2>
+      </div>
+      <div class="summary-card">
+        <div class="summary-section">
+          <strong>📦 Товар:</strong>
+          <p>${escapeHtml(orderData.product)}</p>
+        </div>
+        <div class="summary-section">
+          <strong>📊 Количество:</strong>
+          <p>${escapeHtml(orderData.quantity)}</p>
+        </div>
+        <div class="summary-section">
+          <strong>📝 ТЗ (условия):</strong>
+          <p>${escapeHtml(orderData.tz)}</p>
+        </div>
+        ${
+          orderData.needsPickup
+            ? `<div class="summary-section">
+                <strong>🚚 Нужен забор:</strong>
+                <p>Да</p>
+              </div>`
+            : ""
+        }
+        ${pickupList}
+        <div class="summary-section">
+          <strong>🏪 Маркетплейс:</strong>
+          <p>${orderData.marketplace === "wb" ? "Wildberries" : "Ozon"}</p>
+        </div>
+        <div class="summary-section">
+          <strong>📍 Склад назначения:</strong>
+          <p>${escapeHtml(whLabel)}</p>
+        </div>
+        ${
+          orderData.desiredDeliveryDate
+            ? `<div class="summary-section">
+                <strong>📅 Желаемая дата поставки:</strong>
+                <p>${escapeHtml(orderData.desiredDeliveryDate)}</p>
+              </div>`
+            : ""
+        }
+        ${
+          orderData.comment
+            ? `<div class="summary-section">
+                <strong>💬 Комментарий:</strong>
+                <p>${escapeHtml(orderData.comment)}</p>
+              </div>`
+            : ""
+        }
+        <div style="margin-top: 20px; display: flex; gap: 8px; flex-direction: column;">
+          <button type="button" class="btn btn-primary" id="confirm-order">✅ Создать заявку</button>
+          <button type="button" class="btn btn-secondary" id="edit-order">✏️ Редактировать</button>
+        </div>
+      </div>
+    </div>`;
+
+  formState.step = "order-summary";
+
+  document.getElementById("confirm-order").onclick = () => {
+    tg.sendData(JSON.stringify(orderData));
+    showNotification("✅ Заявка отправлена боту");
+    setTimeout(() => {
+      formState.orderData = {
+        product: "",
+        quantity: "",
+        tz: "",
+        needsPickup: false,
+        marketplace: "",
+        warehouseId: "",
+        pickupAddresses: [""],
+        desiredDeliveryDate: "",
+        comment: "",
+      };
+      formState.errors = {};
+      tg.close();
+    }, 1000);
   };
-  formState.errors = {};
-  setTimeout(() => goToMain(), 1500);
+
+  document.getElementById("edit-order").onclick = () => {
+    renderNewOrder();
+  };
+
+  updateButtonState();
 }
 
 function showNotification(text) {

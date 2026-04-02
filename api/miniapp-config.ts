@@ -2,6 +2,7 @@ import { initDb } from "../src/lib/db.js";
 import { getBotToken } from "../src/env.js";
 import { parseUserIdFromWebAppInitData } from "../src/lib/telegram-webapp-init.js";
 import { canShowSwitchRoleInMiniApp } from "../src/lib/miniapp-role.js";
+import { getLockedRole } from "../src/store/user-role-store.js";
 
 let dbReady = false;
 
@@ -57,9 +58,11 @@ export default async (req: { method?: string; query?: { initData?: string } }, r
 
   try {
     const canSwitchRole = await canShowSwitchRoleInMiniApp(uid);
-    res.status(200).json({ canSwitchRole });
+    const lockedRole = await getLockedRole(uid);
+    const currentRole = lockedRole || "client";
+    res.status(200).json({ canSwitchRole, currentRole });
   } catch (err) {
     console.error("miniapp-config", err);
-    res.status(500).json({ canSwitchRole: false, error: "internal" });
+    res.status(500).json({ canSwitchRole: false, currentRole: "client", error: "internal" });
   }
 };
