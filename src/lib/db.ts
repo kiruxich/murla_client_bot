@@ -43,7 +43,8 @@ export const persistDb = (): void => {
 
 const initSqlite = async (): Promise<void> => {
   const SQL = await initSqlJs({
-    locateFile: (file) => path.join(process.cwd(), "node_modules", "sql.js", "dist", file),
+    locateFile: (file: string) =>
+      path.join(process.cwd(), "node_modules", "sql.js", "dist", file),
   });
   const filePath = resolveDbPath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });

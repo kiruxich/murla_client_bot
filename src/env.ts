@@ -12,6 +12,28 @@ export const getPostgresUrl = (): string | undefined =>
   process.env.POSTGRES_URL?.trim() || process.env.DATABASE_URL?.trim();
 
 /**
+ * HTTPS URL веб-приложения (Telegram Mini App). Задаётся в @BotFather → Bot → Bot Settings → Menu Button / Domain.
+ * Если задано — при старте бота вызывается `setChatMenuButton` и в меню клиента добавляется кнопка «Открыть приложение».
+ */
+export const getMiniAppUrl = (): string | undefined => {
+  const raw = process.env.MINI_APP_URL?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") {
+      console.warn("MINI_APP_URL: нужен https (для Mini App). Игнорируем.");
+      return undefined;
+    }
+    return u.href;
+  } catch {
+    console.warn("MINI_APP_URL: неверный URL. Игнорируем.");
+    return undefined;
+  }
+};
+
+/**
  * Токен бота:
  * - **Прод (Vercel):** только `BOT_TOKEN` — продовый токен; не задавайте `USE_DEV_BOT`.
  * - **Локально:** `USE_DEV_BOT=true` + `BOT_TOKEN_DEV` — отдельный dev-бот, чтобы не трогать прод.
