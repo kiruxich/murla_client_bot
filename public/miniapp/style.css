@@ -483,6 +483,76 @@ body {
   font-weight: 500;
 }
 
+/* === ВЫБОР ДАТА (ДИАПАЗОН) === */
+.date-range-container {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.date-range-input {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: var(--input-bg);
+  color: var(--text-color);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.date-range-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  background-color: var(--bg-color);
+}
+
+/* Стили для Litepicker календаря */
+.litepicker {
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.litepicker .month-item-header {
+  background-color: var(--input-bg);
+  color: var(--text-color);
+}
+
+.litepicker .day-item {
+  color: var(--text-color);
+}
+
+.litepicker .day-item.is-today {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.litepicker .day-item.is-in-range {
+  background-color: rgba(0, 136, 204, 0.2);
+  color: var(--text-color);
+}
+
+.litepicker .day-item.is-start-date,
+.litepicker .day-item.is-end-date {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.litepicker .day-item:hover {
+  background-color: var(--border-color);
+}
+
+.litepicker .tooltip {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.litepicker .container__months {
+  gap: 8px;
+}
+
 /* === СЕЛЕКТ С ЦВЕТОВОЙ КОДИРОВКОЙ === */
 .warehouse-option {
   padding: 12px;

@@ -83,6 +83,8 @@ const formState = {
   },
   errors: {},
   profileCanSwitchRole: false,
+  currentRole: "client",
+  selectedRoleForSwitch: null,
 };
 
 const initDataUnsafe = tg.initDataUnsafe;
@@ -242,9 +244,12 @@ function renderNewOrder() {
           ${err.warehouseId ? `<span class="error-text">${escapeHtml(err.warehouseId)}</span>` : ""}
         </div>
         <div class="form-group">
-          <label>Желаемая дата поставки</label>
-          <input type="text" name="desiredDeliveryDate" placeholder="Например: 15.04.2026"
-            value="${escapeHtml(d.desiredDeliveryDate)}" />
+          <label>Желаемая дата поставки (диапазон)</label>
+          <div class="date-range-container">
+            <input type="text" id="date-range-picker" placeholder="Выберите даты (с-по)"
+              value="${escapeHtml(d.desiredDeliveryDate)}" readonly class="date-range-input" />
+            <button type="button" class="btn btn-secondary btn-small" id="clear-dates">Очистить</button>
+          </div>
         </div>
         <div class="form-group">
           <label>Комментарий</label>
@@ -280,10 +285,43 @@ function renderNewOrder() {
     if (t.name === "product") formState.orderData.product = t.value;
     if (t.name === "quantity") formState.orderData.quantity = t.value;
     if (t.name === "tz") formState.orderData.tz = t.value;
-    if (t.name === "desiredDeliveryDate") formState.orderData.desiredDeliveryDate = t.value;
     if (t.name === "comment") formState.orderData.comment = t.value;
     if (t.name === "warehouseId") formState.orderData.warehouseId = t.value;
   });
+
+  // Инициализируем календарь выбора дат
+  const dateInput = document.getElementById("date-range-picker");
+  if (dateInput && window.Litepicker) {
+    new Litepicker({
+      element: dateInput,
+      singleMode: false, // Выбор диапазона
+      startDate: formState.orderData.desiredDeliveryDate ? 
+        moment(formState.orderData.desiredDeliveryDate, "DD.MM.YYYY") : undefined,
+      format: "DD.MM.YYYY",
+      lang: "ru",
+      tooltipText: [" по "],
+      onSelect: (startDate, endDate) => {
+        if (startDate && endDate) {
+          const start = startDate.format("DD.MM.YYYY");
+          const end = endDate.format("DD.MM.YYYY");
+          formState.orderData.desiredDeliveryDate = `${start} - ${end}`;
+          dateInput.value = `${start} - ${end}`;
+        } else if (startDate) {
+          const date = startDate.format("DD.MM.YYYY");
+          formState.orderData.desiredDeliveryDate = date;
+          dateInput.value = date;
+        }
+      },
+    });
+  }
+
+  const clearBtn = document.getElementById("clear-dates");
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      formState.orderData.desiredDeliveryDate = "";
+      dateInput.value = "";
+    };
+  }
 
   const addBtn = document.getElementById("add-pickup");
   if (addBtn) {
@@ -328,14 +366,21 @@ async function fetchMiniappConfig() {
     return { canSwitchRole: false, currentRole: "client" };
   }
   try {
-    const r = await fetch("/api/miniapp-config?initData=" + encodeURIComponent(initData));
+    // Добавляем timestamp чтобы избежать кеширования
+    const timestamp = Date.now();
+    const r = await fetch("/api/miniapp-config?initData=" + encodeURIComponent(initData) + "&t=" + timestamp, {
+      headers: {
+        "Cache-Control": "no-cache",
+      },
+    });
     if (!r.ok) return { canSwitchRole: false, currentRole: "client" };
     const j = await r.json();
     return {
       canSwitchRole: Boolean(j.canSwitchRole),
       currentRole: j.currentRole || "client",
     };
-  } catch {
+  } catch (err) {
+    console.error("fetchMiniappConfig error:", err);
     return { canSwitchRole: false, currentRole: "client" };
   }
 }
@@ -458,8 +503,18 @@ function showRoleSelector(currentRole) {
   });
 
   document.getElementById("confirm-role").onclick = () => {
-    showNotification("🔄 Смена роли...");
+    // Сохраняем выбранную роль локально перед отправкой
+    formState.selectedRoleForSwitch = selectedRole;
+    showNotification("✅ Роль выбрана. Перезагружаем приложение...");
+    
+    // Отправляем команду смены роли в бот (он обновит в БД)
     tg.sendData(JSON.stringify({ action: "switch_role", selectedRole }));
+    
+    // Обновляем текущую роль в памяти и закрываем приложение
+    // При переоткрытии приложение загрузит обновленную роль из API
+    setTimeout(() => {
+      tg.close();
+    }, 800);
   };
 
   updateButtonState();
