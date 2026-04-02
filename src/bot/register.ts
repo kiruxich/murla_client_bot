@@ -166,23 +166,21 @@ const sortOrdersByUpdatedDesc = (orders: FulfillmentOrder[]): FulfillmentOrder[]
 const MURLA_SITE_URL = "https://murla.company";
 const MURLA_GROUP_TG_URL = "https://t.me/MurlaWbOzonFF";
 
-/** Сайт и группа — в одну строку (две колонки), короткие подписи для «широкой» сетки. */
 const withMurlaLinksRow = (kb: InlineKeyboard): InlineKeyboard =>
   kb
     .row()
-    .url("🌐 Сайт murla.company", MURLA_SITE_URL)
-    .url("💬 Группа murlaFF", MURLA_GROUP_TG_URL);
+    .url("🌐 Сайт", MURLA_SITE_URL)
+    .url("💬 Группа", MURLA_GROUP_TG_URL);
 
 const mainMenuKeyboard = (role: BotRole): InlineKeyboard => {
   const kb = new InlineKeyboard();
   if (role === "client") {
-    kb.text("➕ Новая заявка", "menu:new_order")
-      .text("📋 Все заявки", "menu:my_orders")
-      .row()
+    kb.text("➕ Новая заявка", "menu:new_order").row()
+      .text("📋 Заявки", "menu:my_orders")
       .text("📄 Черновики", "menu:my_drafts")
-      .text("🔄 Активные", "menu:my_active")
       .row()
-      .text("✏️ Название ИП / магазина", "menu:edit_business");
+      .text("🔄 Активные", "menu:my_active")
+      .text("✏️ ИП / магазин", "menu:edit_business");
     const mini = getMiniAppUrl();
     if (mini) {
       kb.row().webApp("📱 Приложение", mini);

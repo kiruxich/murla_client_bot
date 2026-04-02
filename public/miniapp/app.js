@@ -85,6 +85,8 @@ const formState = {
   profileCanSwitchRole: false,
   currentRole: "client",
   selectedRoleForSwitch: null,
+  registered: true,
+  registrationStep: "done",
 };
 
 const initDataUnsafe = tg.initDataUnsafe;
@@ -187,7 +189,7 @@ function renderMain() {
       </div>
     </div>`;
   formState.step = "main";
-  document.getElementById("btn-new-order").onclick = () => goToNewOrder();
+  document.getElementById("btn-new-order").onclick = () => checkRegistrationAndProceed();
   document.getElementById("btn-order-list").onclick = () => goToOrderList();
   document.getElementById("btn-profile").onclick = () => goToProfile();
   updateButtonState();
@@ -431,10 +433,12 @@ async function fetchMiniappConfig() {
     return {
       canSwitchRole: Boolean(j.canSwitchRole),
       currentRole: j.currentRole || "client",
+      registered: j.registered !== false,
+      registrationStep: j.registrationStep || "done",
     };
   } catch (err) {
     console.error("fetchMiniappConfig error:", err);
-    return { canSwitchRole: false, currentRole: "client" };
+    return { canSwitchRole: false, currentRole: "client", registered: true, registrationStep: "done" };
   }
 }
 
@@ -513,19 +517,42 @@ function showRoleSelector(currentRole) {
     };
   });
 
-  document.getElementById("confirm-role").onclick = () => {
-    // Сохраняем выбранную роль локально перед отправкой
-    formState.selectedRoleForSwitch = selectedRole;
-    showNotification("✅ Роль выбрана. Перезагружаем приложение...");
-    
-    // Отправляем команду смены роли в бот (он обновит в БД)
-    tg.sendData(JSON.stringify({ action: "switch_role", selectedRole }));
-    
-    // Обновляем текущую роль в памяти и закрываем приложение
-    // При переоткрытии приложение загрузит обновленную роль из API
-    setTimeout(() => {
-      tg.close();
-    }, 800);
+  document.getElementById("confirm-role").onclick = async () => {
+    const confirmBtn = document.getElementById("confirm-role");
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Подождите…";
+    }
+
+    try {
+      const r = await fetch("/api/miniapp-switch-role", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          initData: tg.initData,
+          selectedRole,
+        }),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        formState.currentRole = selectedRole;
+        showNotification("✅ Роль изменена! Смотрите чат бота.");
+        setTimeout(() => tg.close(), 1200);
+      } else {
+        showNotification("❌ " + (j.error === "role_locked" ? "Роль закреплена" : "Ошибка смены роли"));
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = "Подтвердить";
+        }
+      }
+    } catch (err) {
+      console.error("switch-role error:", err);
+      showNotification("❌ Ошибка сети");
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Подтвердить";
+      }
+    }
   };
 
   updateButtonState();
@@ -647,15 +674,236 @@ function renderProfileContent(cfg, orders = [], currentRole = "client") {
   updateButtonState();
 }
 
+function renderRegistration(step) {
+  formState.step = "registration";
+
+  if (step === "consent") {
+    app.innerHTML = `
+      <div class="container">
+        <div class="header">
+          <button class="back-btn" type="button" id="back-from-reg">← Назад</button>
+          <h2>Регистрация</h2>
+        </div>
+        <div class="reg-card">
+          <div class="reg-step-indicator">Шаг 1 из 3</div>
+          <div class="reg-icon">📋</div>
+          <h3>Согласие с условиями</h3>
+          <p class="reg-text">
+            Для работы с заявками подтвердите согласие с условиями обслуживания и получения уведомлений в Telegram.
+          </p>
+          <button type="button" class="btn btn-primary" id="reg-accept">✅ Согласен с условиями</button>
+        </div>
+      </div>`;
+    document.getElementById("back-from-reg").onclick = () => goToMain();
+    document.getElementById("reg-accept").onclick = async () => {
+      const btn = document.getElementById("reg-accept");
+      if (btn) { btn.disabled = true; btn.textContent = "Подождите…"; }
+      try {
+        const r = await fetch("/api/miniapp-register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData: tg.initData, step: "consent" }),
+        });
+        const j = await r.json();
+        if (j.ok) {
+          formState.registrationStep = j.nextStep;
+          renderRegistration(j.nextStep);
+        } else {
+          showNotification("❌ Ошибка");
+          if (btn) { btn.disabled = false; btn.textContent = "✅ Согласен с условиями"; }
+        }
+      } catch {
+        showNotification("❌ Ошибка сети");
+        if (btn) { btn.disabled = false; btn.textContent = "✅ Согласен с условиями"; }
+      }
+    };
+    updateButtonState();
+    return;
+  }
+
+  if (step === "phone") {
+    app.innerHTML = `
+      <div class="container">
+        <div class="header">
+          <button class="back-btn" type="button" id="back-from-reg">← Назад</button>
+          <h2>Регистрация</h2>
+        </div>
+        <div class="reg-card">
+          <div class="reg-step-indicator">Шаг 2 из 3</div>
+          <div class="reg-icon">📱</div>
+          <h3>Подтверждение телефона</h3>
+          <p class="reg-text">
+            Номер нужен для связи по заявкам. Нажмите кнопку — Telegram передаст номер автоматически.
+          </p>
+          <button type="button" class="btn btn-primary" id="reg-phone-tg">📱 Отправить номер через Telegram</button>
+          <p class="reg-text small" style="margin-top:12px;">Или введите вручную:</p>
+          <div class="form-group" style="margin-top:8px;">
+            <input type="tel" id="reg-phone-input" placeholder="+7 999 123 45 67" class="reg-input" />
+            <button type="button" class="btn btn-secondary btn-small" id="reg-phone-manual" style="margin-top:8px;">Отправить</button>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById("back-from-reg").onclick = () => goToMain();
+
+    document.getElementById("reg-phone-tg").onclick = () => {
+      if (typeof tg.requestContact === "function") {
+        tg.requestContact((sent, event) => {
+          if (sent && event?.responseUnsafe?.contact?.phone_number) {
+            submitPhone(event.responseUnsafe.contact.phone_number);
+          } else if (sent) {
+            showNotification("Номер не получен. Введите вручную.");
+          }
+        });
+      } else {
+        showNotification("Кнопка недоступна. Введите номер вручную.");
+      }
+    };
+
+    document.getElementById("reg-phone-manual").onclick = () => {
+      const val = document.getElementById("reg-phone-input").value.trim();
+      if (!val || val.length < 6) {
+        showNotification("Введите корректный номер телефона");
+        return;
+      }
+      submitPhone(val);
+    };
+    updateButtonState();
+    return;
+  }
+
+  if (step === "business_name") {
+    app.innerHTML = `
+      <div class="container">
+        <div class="header">
+          <button class="back-btn" type="button" id="back-from-reg">← Назад</button>
+          <h2>Регистрация</h2>
+        </div>
+        <div class="reg-card">
+          <div class="reg-step-indicator">Шаг 3 из 3</div>
+          <div class="reg-icon">🏷</div>
+          <h3>Название ИП / магазина</h3>
+          <p class="reg-text">
+            Как отображать вас в заявках? Например:
+          </p>
+          <p class="reg-example">ИП Иванов Иван Иванович</p>
+          <p class="reg-example">Магазин «КИС КИС»</p>
+          <div class="form-group" style="margin-top:12px;">
+            <input type="text" id="reg-business-input" placeholder="Название ИП или магазина" class="reg-input" />
+          </div>
+          <button type="button" class="btn btn-primary" id="reg-business-submit" style="margin-top:12px;">Завершить регистрацию</button>
+        </div>
+      </div>`;
+    document.getElementById("back-from-reg").onclick = () => goToMain();
+    document.getElementById("reg-business-submit").onclick = async () => {
+      const val = document.getElementById("reg-business-input").value.trim();
+      if (val.length < 2) {
+        showNotification("Минимум 2 символа");
+        return;
+      }
+      if (val.length > 200) {
+        showNotification("Максимум 200 символов");
+        return;
+      }
+      const btn = document.getElementById("reg-business-submit");
+      if (btn) { btn.disabled = true; btn.textContent = "Подождите…"; }
+      try {
+        const r = await fetch("/api/miniapp-register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData: tg.initData, step: "business_name", businessName: val }),
+        });
+        const j = await r.json();
+        if (j.ok && j.nextStep === "done") {
+          formState.registered = true;
+          formState.registrationStep = "done";
+          showNotification("✅ Регистрация завершена!");
+          setTimeout(() => goToNewOrder(), 800);
+        } else if (j.ok) {
+          formState.registrationStep = j.nextStep;
+          renderRegistration(j.nextStep);
+        } else {
+          const msg = j.error === "name_too_short" ? "Минимум 2 символа" : "Ошибка";
+          showNotification("❌ " + msg);
+          if (btn) { btn.disabled = false; btn.textContent = "Завершить регистрацию"; }
+        }
+      } catch {
+        showNotification("❌ Ошибка сети");
+        if (btn) { btn.disabled = false; btn.textContent = "Завершить регистрацию"; }
+      }
+    };
+    updateButtonState();
+    return;
+  }
+
+  goToMain();
+}
+
+async function submitPhone(phone) {
+  const cleaned = phone.replace(/[\s\-()]/g, "");
+  try {
+    const r = await fetch("/api/miniapp-register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData: tg.initData, step: "phone", phone: cleaned }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      formState.registrationStep = j.nextStep;
+      if (j.nextStep === "done") {
+        formState.registered = true;
+        showNotification("✅ Регистрация завершена!");
+        setTimeout(() => goToNewOrder(), 800);
+      } else {
+        renderRegistration(j.nextStep);
+      }
+    } else {
+      showNotification("❌ Некорректный номер");
+    }
+  } catch {
+    showNotification("❌ Ошибка сети");
+  }
+}
+
+async function checkRegistrationAndProceed() {
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <button class="back-btn" type="button" id="back-from-loading">← Назад</button>
+        <h2>Проверка…</h2>
+      </div>
+      <p class="info-text">Загрузка…</p>
+    </div>`;
+  document.getElementById("back-from-loading").onclick = () => goToMain();
+
+  const cfg = await fetchMiniappConfig();
+  formState.registered = cfg.registered;
+  formState.registrationStep = cfg.registrationStep;
+  formState.currentRole = cfg.currentRole;
+
+  if (!cfg.registered) {
+    renderRegistration(cfg.registrationStep);
+    return;
+  }
+
+  if (!formState.orderData.needsPickup) {
+    formState.orderData.pickupAddresses = [""];
+  }
+  renderNewOrder();
+}
+
 function goToMain() {
   renderMain();
 }
 
 function goToNewOrder() {
-  if (!formState.orderData.needsPickup) {
-    formState.orderData.pickupAddresses = [""];
+  if (formState.registered) {
+    if (!formState.orderData.needsPickup) {
+      formState.orderData.pickupAddresses = [""];
+    }
+    renderNewOrder();
+  } else {
+    checkRegistrationAndProceed();
   }
-  renderNewOrder();
 }
 
 function goToOrderList() {
@@ -776,24 +1024,64 @@ function showOrderSummary(orderData) {
 
   formState.step = "order-summary";
 
-  document.getElementById("confirm-order").onclick = () => {
-    tg.sendData(JSON.stringify(orderData));
-    showNotification("✅ Заявка отправлена боту");
-    setTimeout(() => {
-      formState.orderData = {
-        product: "",
-        quantity: "",
-        tz: "",
-        needsPickup: false,
-        marketplace: "",
-        warehouseId: "",
-        pickupAddresses: [""],
-        desiredDeliveryDate: "",
-        comment: "",
-      };
-      formState.errors = {};
-      tg.close();
-    }, 1000);
+  document.getElementById("confirm-order").onclick = async () => {
+    const confirmBtn = document.getElementById("confirm-order");
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Отправка…";
+    }
+
+    try {
+      const r = await fetch("/api/miniapp-create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          initData: tg.initData,
+          product: orderData.product,
+          quantity: orderData.quantity,
+          tz: orderData.tz,
+          needsPickup: orderData.needsPickup,
+          marketplace: orderData.marketplace,
+          warehouseId: orderData.warehouseId,
+          pickupAddresses: orderData.pickupAddresses,
+          desiredDeliveryDate: orderData.desiredDeliveryDate,
+          comment: orderData.comment,
+        }),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        showNotification("✅ Заявка №" + j.orderId + " создана! Смотрите чат бота.");
+        formState.orderData = {
+          product: "",
+          quantity: "",
+          tz: "",
+          needsPickup: false,
+          marketplace: "",
+          warehouseId: "",
+          pickupAddresses: [""],
+          desiredDeliveryDate: "",
+          comment: "",
+        };
+        formState.errors = {};
+        setTimeout(() => tg.close(), 1500);
+      } else {
+        const msg = j.error === "not_registered" ? "Завершите регистрацию в боте"
+          : j.error === "client_role_required" ? "Доступно только в роли Клиент"
+          : "Ошибка создания заявки";
+        showNotification("❌ " + msg);
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = "✅ Создать заявку";
+        }
+      }
+    } catch (err) {
+      console.error("create-order error:", err);
+      showNotification("❌ Ошибка сети");
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "✅ Создать заявку";
+      }
+    }
   };
 
   document.getElementById("edit-order").onclick = () => {

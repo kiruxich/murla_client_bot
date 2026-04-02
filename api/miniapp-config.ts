@@ -3,6 +3,8 @@ import { getBotToken } from "../src/env.js";
 import { parseUserIdFromWebAppInitData } from "../src/lib/telegram-webapp-init.js";
 import { canShowSwitchRoleInMiniApp } from "../src/lib/miniapp-role.js";
 import { getLockedRole } from "../src/store/user-role-store.js";
+import { getLastSelectedBotRole } from "../src/store/last-bot-role-store.js";
+import { isClientRegistered, needsPhoneVerification, needsBusinessName } from "../src/store/client-store.js";
 
 let dbReady = false;
 
@@ -59,8 +61,24 @@ export default async (req: { method?: string; query?: { initData?: string } }, r
   try {
     const canSwitchRole = await canShowSwitchRoleInMiniApp(uid);
     const lockedRole = await getLockedRole(uid);
-    const currentRole = lockedRole || "client";
-    res.status(200).json({ canSwitchRole, currentRole });
+    const lastRole = await getLastSelectedBotRole(uid);
+    const currentRole = lockedRole || lastRole || "client";
+
+    const registered = await isClientRegistered(uid);
+    let registrationStep = "done";
+    if (!registered) {
+      const needsPhone = await needsPhoneVerification(uid);
+      const needsBusiness = await needsBusinessName(uid);
+      if (needsBusiness) {
+        registrationStep = "business_name";
+      } else if (needsPhone) {
+        registrationStep = "phone";
+      } else {
+        registrationStep = "consent";
+      }
+    }
+
+    res.status(200).json({ canSwitchRole, currentRole, registered, registrationStep });
   } catch (err) {
     console.error("miniapp-config", err);
     res.status(500).json({ canSwitchRole: false, currentRole: "client", error: "internal" });

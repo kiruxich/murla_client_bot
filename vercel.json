@@ -5,6 +5,15 @@
     },
     "api/miniapp-config.ts": {
       "maxDuration": 10
+    },
+    "api/miniapp-switch-role.ts": {
+      "maxDuration": 10
+    },
+    "api/miniapp-create-order.ts": {
+      "maxDuration": 15
+    },
+    "api/miniapp-register.ts": {
+      "maxDuration": 10
     }
   }
 }
