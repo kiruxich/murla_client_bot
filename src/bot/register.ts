@@ -165,6 +165,17 @@ const sortOrdersByUpdatedDesc = (orders: FulfillmentOrder[]): FulfillmentOrder[]
 
 const MURLA_SITE_URL = "https://murla.company";
 const MURLA_GROUP_TG_URL = "https://t.me/MurlaWbOzonFF";
+const MINIAPP_CACHE_BUSTER = "20260402-2";
+
+const withMiniappVersion = (url: string): string => {
+  try {
+    const u = new URL(url);
+    u.searchParams.set("cv", MINIAPP_CACHE_BUSTER);
+    return u.toString();
+  } catch {
+    return url;
+  }
+};
 
 const withMurlaLinksRow = (kb: InlineKeyboard): InlineKeyboard =>
   kb
@@ -183,7 +194,7 @@ const mainMenuKeyboard = (role: BotRole): InlineKeyboard => {
       .text("✏️ ИП / магазин", "menu:edit_business");
     const mini = getMiniAppUrl();
     if (mini) {
-      kb.row().webApp("📱 Приложение", mini);
+      kb.row().webApp("📱 Приложение", withMiniappVersion(mini));
     }
     return withMurlaLinksRow(kb);
   }

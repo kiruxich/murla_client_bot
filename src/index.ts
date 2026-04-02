@@ -3,6 +3,18 @@ import { getMiniAppUrl } from "./env.js";
 import { initDb } from "./lib/db.js";
 import { getBot } from "./telegram-bot.js";
 
+const MINIAPP_CACHE_BUSTER = "20260402-2";
+
+const withMiniappVersion = (url: string): string => {
+  try {
+    const u = new URL(url);
+    u.searchParams.set("cv", MINIAPP_CACHE_BUSTER);
+    return u.toString();
+  } catch {
+    return url;
+  }
+};
+
 await initDb();
 
 const bot = getBot();
@@ -14,7 +26,7 @@ if (miniAppUrl) {
       menu_button: {
         type: "web_app",
         text: "Мурла",
-        web_app: { url: miniAppUrl },
+        web_app: { url: withMiniappVersion(miniAppUrl) },
       },
     });
   } catch (err) {

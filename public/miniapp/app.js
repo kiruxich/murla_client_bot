@@ -17,6 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
+const APP_BUILD = "2026-04-02-cv20260402-2";
 
 tg.ready();
 tg.expand();
@@ -206,6 +207,7 @@ function renderMain() {
         <h1>Мурла 📦</h1>
         <p class="subtitle">Управление заявками</p>
         <p class="info-text small" style="margin-top:8px;">Роль: <strong>${roleLabel}</strong></p>
+        <p class="info-text small" style="margin-top:4px; opacity:.7;">Build: ${APP_BUILD}</p>
       </div>
       <div class="menu">`;
 
@@ -576,7 +578,7 @@ async function renderEditBusiness() {
       counter.textContent = e.target.value.length;
     });
 
-    document.getElementById("btn-save-business").onclick = () => saveBusinessName();
+    document.getElementById("btn-save-business").onclick = (e) => saveBusinessName(e);
     document.getElementById("btn-cancel-business").onclick = () => renderMain();
   } catch (err) {
     console.error("❌ Ошибка загрузки профиля:", err);
@@ -620,7 +622,7 @@ async function deleteDraft(draftId) {
   }
 }
 
-async function saveBusinessName() {
+async function saveBusinessName(event) {
   const businessName = document.getElementById("business-name-input").value.trim();
 
   if (!businessName || businessName.length < 2 || businessName.length > 200) {
@@ -628,7 +630,11 @@ async function saveBusinessName() {
     return;
   }
 
-  const btn = event.target;
+  const btn = event?.target;
+  if (!btn) {
+    showNotification("❌ Не удалось сохранить (кнопка не найдена)");
+    return;
+  }
   btn.disabled = true;
   btn.textContent = "⏳ Сохранение...";
 
@@ -762,7 +768,7 @@ async function renderEditOrder(orderId) {
       updateWarehouseOptions(e.target.value, o.warehouseId);
     });
 
-    document.getElementById("btn-save-edit").onclick = () => saveOrderEdit(orderId);
+    document.getElementById("btn-save-edit").onclick = (e) => saveOrderEdit(orderId, e);
     document.getElementById("btn-cancel-edit").onclick = () => renderOrderDetail(orderId);
   } catch (err) {
     console.error("❌ Ошибка загрузки формы редактирования:", err);
@@ -860,7 +866,7 @@ async function renderDrafts() {
   updateButtonState();
 }
 
-async function saveOrderEdit(orderId) {
+async function saveOrderEdit(orderId, event) {
   const product = document.getElementById("edit-product").value.trim();
   const quantityText = document.getElementById("edit-quantity").value.trim();
   const tz = document.getElementById("edit-tz").value.trim();
@@ -874,7 +880,11 @@ async function saveOrderEdit(orderId) {
     return;
   }
 
-  const btn = event.target;
+  const btn = event?.target;
+  if (!btn) {
+    showNotification("❌ Не удалось сохранить (кнопка не найдена)");
+    return;
+  }
   btn.disabled = true;
   btn.textContent = "⏳ Сохранение...";
 
@@ -1707,7 +1717,7 @@ async function renderOrderDetail(orderId) {
         btn.type = "button";
         btn.className = "btn btn-primary";
         btn.textContent = getActionLabel(action);
-        btn.onclick = () => executeOrderAction(orderId, action);
+        btn.onclick = (e) => executeOrderAction(orderId, action, e);
         actionsContainer.appendChild(btn);
       }
     }
@@ -1748,8 +1758,12 @@ function getActionLabel(action) {
   return labels[action] || action;
 }
 
-async function executeOrderAction(orderId, action) {
-  const btn = event.target;
+async function executeOrderAction(orderId, action, event) {
+  const btn = event?.target;
+  if (!btn) {
+    showNotification("❌ Не удалось выполнить действие");
+    return;
+  }
   btn.disabled = true;
   btn.textContent = "⏳ Отправка...";
 
