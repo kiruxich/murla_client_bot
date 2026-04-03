@@ -621,27 +621,48 @@ async function handleCreateOrder(req: any, res: any, uid: number, token: string)
       comment: comment || undefined,
     });
 
-    const kb = {
-      inline_keyboard: [
-        [{ text: "📤 Отправить в работу", callback_data: `o:${order.id}:send` }],
-        [{ text: "« Меню", callback_data: "menu:back" }],
-      ],
-    };
+    // Зависит от того кто создал - черновик или уже в работе
+    const isDraft = !isProxyOrder;
+    const effectiveStatus = isDraft ? "draft" : "accepted";
+    
+    let kb: any;
+    let notificationText: string;
+    
+    if (isDraft) {
+      // Это черновик - нужна кнопка "Отправить в работу"
+      kb = {
+        inline_keyboard: [
+          [{ text: "📤 Отправить в работу", callback_data: `o:${order.id}:send` }],
+          [{ text: "« Меню", callback_data: "menu:back" }],
+        ],
+      };
+      notificationText = `✅ <b>Черновик №${order.id}</b> создан.\n\n` +
+        formatOrderHtml(order) +
+        "\n\nНажмите «Отправить в работу», чтобы статус стал «Принято в работу».";
+    } else {
+      // Это заявка за клиента, уже в работе - только кнопка меню
+      kb = {
+        inline_keyboard: [
+          [{ text: "« Меню", callback_data: "menu:back" }],
+        ],
+      };
+      notificationText = `✅ <b>Заявка №${order.id}</b> создана менеджером и отправлена в работу.\n\n` +
+        formatOrderHtml(order);
+    }
 
-    // Отправляем уведомление клиенту (даже если создание было от менеджера)
+    // Отправляем уведомление клиенту
     await sendTelegramMessage(
       token,
       clientId,
-      `✅ <b>Черновик №${order.id}</b> создан${isProxyOrder ? " менеджером" : ""}.\n\n` +
-        formatOrderHtml(order) +
-        "\n\nНажмите «Отправить в работу», чтобы статус стал «Принято в работу».",
+      notificationText,
       kb,
     );
 
-    const audiences = NOTIFY_ON_STATUS.draft;
+    // Отправляем уведомления в зависимости от статуса
+    const audiences = isDraft ? NOTIFY_ON_STATUS.draft : NOTIFY_ON_STATUS.accepted;
     if (audiences?.length) {
       const text = `📦 <b>Статус заявки №${order.id}</b>\n` +
-        `${ORDER_STATUS_LABEL.draft}\n\n` +
+        `${ORDER_STATUS_LABEL[effectiveStatus]}\n\n` +
         formatOrderHtml(order);
 
       const targets = new Set<number>();
