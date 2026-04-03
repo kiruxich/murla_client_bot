@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-02-cv20260402-6";
+const APP_BUILD = "2026-04-02-cv20260402-7";
 
 tg.ready();
 tg.expand();
@@ -1048,9 +1048,11 @@ async function renderOrderList(roleFilter = "client", typeFilter = "all") {
     const orders = j.orders || {};
     const allStatuses = Object.keys(orders);
     
-    // Для клиента фильтруем на активные и архив
+    // Фильтруем заявки в зависимости от роли и типа фильтра
     let filteredOrders = {};
+    
     if (roleFilter === "client") {
+      // Для клиента отдельно активные (без draft) и архив
       const activeStatuses = ["accepted", "receiving", "receiving_done", "pack_sort", "ready_for_unload", "in_transit"];
       const archiveStatuses = ["done", "cancelled"];
       
@@ -1064,7 +1066,20 @@ async function renderOrderList(roleFilter = "client", typeFilter = "all") {
         }
       }
     } else {
-      filteredOrders = orders;
+      // Для остальных ролей (packer, driver, manager, supervisor) - все заявки кроме draft
+      const activeStatuses = ["accepted", "receiving", "receiving_done", "pack_sort", "ready_for_unload", "in_transit"];
+      const archiveStatuses = ["done", "cancelled"];
+      
+      if (typeFilter === "archive") {
+        for (const status of archiveStatuses) {
+          if (orders[status]) filteredOrders[status] = orders[status];
+        }
+      } else {
+        // "all" - активные заявки
+        for (const status of activeStatuses) {
+          if (orders[status]) filteredOrders[status] = orders[status];
+        }
+      }
     }
     
     const statusesToShow = Object.keys(filteredOrders);
