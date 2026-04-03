@@ -201,45 +201,51 @@ function renderPickupRows() {
 }
 
 function reattachPickupListeners(form, pickupBlock) {
-  // Обработка input событий на pickup адреса
-  pickupBlock?.addEventListener("input", (e) => {
+  // Event delegation на форме - слушатели никогда не удаляются
+  // Input для редактирования адресов
+  const handlePickupInput = (e) => {
     if (e.target.hasAttribute("data-pickup-idx")) {
       const idx = parseInt(e.target.getAttribute("data-pickup-idx"));
       formState.orderData.pickupAddresses[idx] = e.target.value;
     }
-  });
+  };
   
-  // Обработка click для удаления
-  pickupBlock?.addEventListener("click", (e) => {
+  // Click для удаления адреса
+  const handlePickupClick = (e) => {
     if (e.target.hasAttribute("data-remove-pickup")) {
       e.preventDefault();
       const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
       formState.orderData.pickupAddresses.splice(idx, 1);
-      // Обновляем только содержимое блока адресов, не всю форму
+      // Обновляем только содержимое блока адресов
       pickupBlock.innerHTML = `
         ${renderPickupRows()}
         <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
         ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
       `;
-      // Переподписываем события на новые элементы
-      reattachPickupListeners(form, pickupBlock);
     }
-  });
-  
-  const addPickupBtn = pickupBlock?.querySelector("#add-pickup");
-  if (addPickupBtn) {
-    addPickupBtn.addEventListener("click", () => {
+    
+    // Обработка клика на кнопку "Добавить"
+    if (e.target.id === "add-pickup" || e.target.closest("#add-pickup")) {
       formState.orderData.pickupAddresses.push("");
-      // Обновляем только содержимое блока адресов, не всю форму
       pickupBlock.innerHTML = `
         ${renderPickupRows()}
         <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
         ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
       `;
-      // Переподписываем события на новые элементы
-      reattachPickupListeners(form, pickupBlock);
-    });
-  }
+    }
+  };
+  
+  // Удаляем старые слушатели если они есть
+  pickupBlock?.removeEventListener("input", pickupBlock._pickupInputListener);
+  pickupBlock?.removeEventListener("click", pickupBlock._pickupClickListener);
+  
+  // Сохраняем ссылки на функции чтобы потом удалить
+  pickupBlock._pickupInputListener = handlePickupInput;
+  pickupBlock._pickupClickListener = handlePickupClick;
+  
+  // Добавляем новые слушатели
+  pickupBlock?.addEventListener("input", handlePickupInput);
+  pickupBlock?.addEventListener("click", handlePickupClick);
 }
 
 async function loadRegisteredClients() {
@@ -1828,13 +1834,37 @@ function goToCreateOrderForClient() {
     if (e.target.checked && formState.orderData.pickupAddresses.length === 0) {
       formState.orderData.pickupAddresses = [""];
     }
-    goToCreateOrderForClient();
+    // Показываем/скрываем блок, не перерисовываем форму
+    const pickupBlockElement = pickupBlock;
+    if (pickupBlockElement) {
+      pickupBlockElement.style.display = e.target.checked ? "" : "none";
+      if (e.target.checked) {
+        pickupBlockElement.innerHTML = `
+          ${renderPickupRows()}
+          <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
+          ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
+        `;
+        reattachPickupListeners(form, pickupBlockElement);
+      }
+    }
   });
 
   form.querySelector('[name="marketplace"]').addEventListener("change", (e) => {
     formState.orderData.marketplace = e.target.value;
     formState.orderData.warehouseId = "";
-    goToCreateOrderForClient();
+    // Обновляем список складов
+    const warehouseSelect = form.querySelector('[name="warehouseId"]');
+    const m = e.target.value;
+    const whList = warehousesForMarketplace(m);
+    const warehouseGroup = warehouseSelect?.closest(".form-group");
+    
+    if (warehouseGroup) {
+      warehouseGroup.style.display = m ? "" : "none";
+      warehouseSelect.innerHTML = '<option value="">Выберите склад</option>';
+      warehouseSelect.innerHTML += whList
+        .map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.label)}${w.note ? " — " + escapeHtml(w.note) : ""}</option>`)
+        .join("");
+    }
   });
 
   form.addEventListener("input", (e) => {
