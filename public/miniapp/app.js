@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-03-cv20260403-2";
+const APP_BUILD = "2026-04-03-cv20260403-3";
 
 tg.ready();
 tg.expand();
@@ -2511,7 +2511,27 @@ function showOrderSummary(orderData) {
       console.log("✅ create-order response:", j, "status:", r.status);
       console.log("✅ create-order response:", j);
       if (j.ok) {
-        showNotification("✅ Заявка №" + j.orderId + " создана! Смотрите чат бота.");
+        const orderId = j.orderId;
+        showNotification("✅ Черновик №" + orderId + " создан!");
+        
+        // Показываем экран подтверждения
+        app.innerHTML = `
+          <div class="container">
+            <div class="header">
+              <h2>✅ Черновик создан</h2>
+            </div>
+            <div class="summary-card" style="text-align: center; padding: 32px 16px;">
+              <p style="font-size: 18px; margin-bottom: 16px;">
+                <strong>Заявка №${escapeHtml(orderId)}</strong>
+              </p>
+              <p style="font-size: 16px; color: var(--secondary-color); margin-bottom: 24px; line-height: 1.5;">
+                📋 Черновик создан успешно!<br><br>
+                Проверьте и подтвердите отправку в чате с <strong>@MurlaBot</strong> перед тем как начать работу.
+              </p>
+              <button type="button" class="btn btn-primary" id="back-to-main">← К меню</button>
+            </div>
+          </div>
+        `;
         formState.orderData = {
           product: "",
           quantity: "",
@@ -2524,7 +2544,7 @@ function showOrderSummary(orderData) {
           comment: "",
         };
         formState.errors = {};
-        setTimeout(() => tg.close(), 1500);
+        document.getElementById("back-to-main").onclick = () => goToMain();
       } else {
         const msg = j.error === "not_registered" ? "Завершите регистрацию в боте"
           : j.error === "client_role_required" ? "Доступно только в роли Клиент"
