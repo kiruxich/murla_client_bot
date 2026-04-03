@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-02-cv20260402-2";
+const APP_BUILD = "2026-04-02-cv20260402-3";
 
 tg.ready();
 tg.expand();
@@ -89,6 +89,7 @@ const warehousesForMarketplace = (m) => (m === "wb" ? WB_WAREHOUSES : m === "ozo
 const formState = {
   step: "main",
   orderData: {
+    clientId: "",
     product: "",
     quantity: "",
     tz: "",
@@ -191,9 +192,9 @@ function renderPickupRows() {
       (addr, i) => `
     <div class="pickup-row" data-idx="${i}">
       <label>Адрес забора ${i + 1} *</label>
-      <input type="text" class="pickup-input" data-idx="${i}" placeholder="Адрес, ориентир, как добраться"
+      <input type="text" class="pickup-input" data-pickup-idx="${i}" placeholder="Адрес, ориентир, как добраться"
         value="${escapeHtml(addr)}" />
-      ${rows.length > 1 ? `<button type="button" class="btn-text-remove" data-remove="${i}">Удалить</button>` : ""}
+      ${rows.length > 1 ? `<button type="button" class="btn-text-remove" data-remove-pickup="${i}">Удалить</button>` : ""}
     </div>`,
     )
     .join("");
@@ -2125,9 +2126,12 @@ async function executeOrderAction(orderId, action, event) {
   }
 }
 
-function validateOrder() {
+function validateOrder(isProxy = false) {
   const errors = {};
   const d = formState.orderData;
+  if (isProxy && (!d.clientId || !String(d.clientId).trim())) {
+    errors.clientId = "Выберите клиента";
+  }
   if (!d.product || !d.product.trim()) errors.product = "Укажите товар";
   if (!d.quantity || !d.quantity.trim()) errors.quantity = "Укажите количество";
   if (!d.tz || !d.tz.trim()) errors.tz = "Укажите ТЗ/условия";
@@ -2142,7 +2146,7 @@ function validateOrder() {
 }
 
 function submitProxyOrder() {
-  if (!validateOrder()) {
+  if (!validateOrder(true)) {
     goToCreateOrderForClient();
     return;
   }
@@ -2151,7 +2155,8 @@ function submitProxyOrder() {
   const clientId = form.querySelector('[name="clientId"]').value.trim();
   
   if (!clientId) {
-    showNotification("⚠️ Выберите клиента");
+    formState.errors.clientId = "Выберите клиента";
+    goToCreateOrderForClient();
     return;
   }
 
