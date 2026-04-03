@@ -148,6 +148,11 @@ const driverOrderDetailKeyboard = (ctx: MyContext, orderId: string, o: Fulfillme
     kb.text("📅 Утвердить дату рейса", `o:${orderId}:dvc_date`).row();
   }
   if (o.status === "ready_for_unload") {
+    if (!o.approvedDeliveryDate) {
+      kb.text("📅 Выбрать дату рейса", `o:${orderId}:dvc_date`).row();
+    } else {
+      kb.text("📅 Изменить дату рейса", `o:${orderId}:dvc_date_edit`).row();
+    }
     kb.text("🚛 В пути", `o:${orderId}:dvt`).row();
   }
   if (o.status === "in_transit") {
@@ -187,10 +192,10 @@ const mainMenuKeyboard = (role: BotRole): InlineKeyboard => {
   const kb = new InlineKeyboard();
   if (role === "client") {
     kb.text("➕ Новая заявка", "menu:new_order").row()
-      .text("📋 Заявки", "menu:my_orders")
-      .text("📄 Черновики", "menu:my_drafts")
+      .text("🔄 Активные", "menu:client_active")
+      .text("📄 Черновики", "menu:client_drafts")
       .row()
-      .text("🔄 Активные", "menu:my_active")
+      .text("📁 Архив", "menu:client_archive")
       .text("✏️ ИП / магазин", "menu:edit_business");
     const mini = getMiniAppUrl();
     if (mini) {
@@ -290,7 +295,7 @@ const kbConfirmDraft = (): InlineKeyboard =>
 
 const ordersListCallback = (role: BotRole): string => {
   if (role === "client") {
-    return "menu:my_orders";
+    return "menu:client_active";
   }
   if (role === "packer") {
     return "menu:packer_orders";
@@ -304,12 +309,15 @@ const ordersListCallback = (role: BotRole): string => {
 const clientOrdersListCallback = (ctx: MyContext): string => {
   const m = ctx.session.clientOrdersListMode;
   if (m === "drafts") {
-    return "menu:my_drafts";
+    return "menu:client_drafts";
   }
   if (m === "active") {
-    return "menu:my_active";
+    return "menu:client_active";
   }
-  return "menu:my_orders";
+  if (m === "archive") {
+    return "menu:client_archive";
+  }
+  return "menu:client_active";
 };
 
 const isActiveClientOrder = (o: FulfillmentOrder): boolean =>
@@ -1282,7 +1290,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     await ctx.answerCallbackQuery({ text: "Удалено" });
     await ctx.editMessageText(`🗑 Черновик №${id} удалён.`, {
       reply_markup: new InlineKeyboard()
-        .text("📄 Черновики", "menu:my_drafts")
+        .text("📄 Черновики", "menu:client_drafts")
         .row()
         .text("« Меню", "menu:back"),
     });
@@ -1315,7 +1323,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     );
   });
 
-  bot.callbackQuery("menu:my_orders", async (ctx) => {
+  bot.callbackQuery("menu:client_active", async (ctx) => {
     if (ctx.session.role !== "client") {
       await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
@@ -1325,10 +1333,10 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       return;
     }
     await ctx.answerCallbackQuery();
-    setClientListMode(ctx, "all");
-    const list = await orderStore.listByClient(uid);
+    setClientListMode(ctx, "active");
+    const list = (await orderStore.listByClient(uid)).filter(isActiveClientOrder);
     if (!list.length) {
-      await ctx.editMessageText("Заявок пока нет.", {
+      await ctx.editMessageText("Активных заявок нет.", {
         reply_markup: new InlineKeyboard()
           .text("➕ Новая заявка", "menu:new_order")
           .text("« Меню", "menu:back"),
@@ -1341,13 +1349,13 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       kb.text(orderListButtonLabel(myName, i, ORDER_STATUS_LABEL[o.status]), `v:${o.id}`).row();
     });
     kb.text("« Меню", "menu:back");
-    await ctx.editMessageText("📋 <b>Все заявки</b> (включая завершённые):", {
+    await ctx.editMessageText("🔄 <b>Активные заявки</b> — в работе:", {
       parse_mode: "HTML",
       reply_markup: kb,
     });
   });
 
-  bot.callbackQuery("menu:my_drafts", async (ctx) => {
+  bot.callbackQuery("menu:client_drafts", async (ctx) => {
     if (ctx.session.role !== "client") {
       await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
@@ -1361,7 +1369,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     const list = (await orderStore.listByClient(uid)).filter((o) => o.status === "draft");
     if (!list.length) {
       await ctx.editMessageText(
-        "Черновиков нет. Создайте заявку и нажмите «Создать черновик» в конце мастера — она появится здесь, пока не отправите её в работу.",
+        "Черновиков нет.",
         {
           reply_markup: new InlineKeyboard()
             .text("➕ Новая заявка", "menu:new_order")
@@ -1377,12 +1385,12 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     });
     kb.text("« Меню", "menu:back");
     await ctx.editMessageText(
-      "📄 <b>Черновики</b> — не отправлены в работу. Откройте заявку, чтобы отправить или удалить.",
+      "📄 <b>Черновики</b> — не отправлены в работу:",
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
 
-  bot.callbackQuery("menu:my_active", async (ctx) => {
+  bot.callbackQuery("menu:client_archive", async (ctx) => {
     if (ctx.session.role !== "client") {
       await ctx.answerCallbackQuery({ text: "Недоступно" });
       return;
@@ -1392,12 +1400,12 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       return;
     }
     await ctx.answerCallbackQuery();
-    setClientListMode(ctx, "active");
-    const list = (await orderStore.listByClient(uid)).filter(isActiveClientOrder);
+    setClientListMode(ctx, "archive");
+    const list = (await orderStore.listByClient(uid)).filter((o) => o.status === "done" || o.status === "cancelled");
     if (!list.length) {
-      await ctx.editMessageText("Активных заявок нет (нет заявок в работе между черновиком и завершением).", {
+      await ctx.editMessageText("Архив пуст.", {
         reply_markup: new InlineKeyboard()
-          .text("📋 Все заявки", "menu:my_orders")
+          .text("🔄 Активные", "menu:client_active")
           .text("« Меню", "menu:back"),
       });
       return;
@@ -1409,7 +1417,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
     });
     kb.text("« Меню", "menu:back");
     await ctx.editMessageText(
-      "🔄 <b>Активные заявки</b> — в работе (не черновик, не завершено, не отменено).",
+      "📁 <b>Архив</b> — завершённые и отменённые заявки:",
       { parse_mode: "HTML", reply_markup: kb },
     );
   });
@@ -1615,7 +1623,7 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
   });
 
   /** Работник склада / водитель: действия по заявке */
-  bot.callbackQuery(/^o:(\d+):(pkr|drv|dvc|dvc_date|dvt|dvf)$/, async (ctx) => {
+  bot.callbackQuery(/^o:(\d+):(pkr|drv|dvc|dvc_date|dvc_date_edit|dvt|dvf)$/, async (ctx) => {
     const id = ctx.match[1];
     const act = ctx.match[2];
     const o = await orderStore.get(id);
@@ -1716,6 +1724,28 @@ export const registerHandlers = (bot: Bot<MyContext>): void => {
       await ctx.answerCallbackQuery();
       await ctx.reply(
         `📅 <b>Заявка №${id}</b>\n\nУкажите дату рейса одним сообщением (например: <code>15.04.2026</code>).`,
+        {
+          parse_mode: "HTML",
+          reply_markup: kbCancelOnly(),
+        },
+      );
+      ctx.session.dvcDateOrderId = id;
+      return;
+    }
+
+    if (act === "dvc_date_edit") {
+      if (ctx.session.role !== "driver") {
+        await ctx.answerCallbackQuery({ text: "Только водитель" });
+        return;
+      }
+      if (o.status !== "ready_for_unload") {
+        await ctx.answerCallbackQuery({ text: "Неверный статус" });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const currentDate = o.approvedDeliveryDate ? `<b>Текущая дата:</b> ${o.approvedDeliveryDate}\n\n` : "";
+      await ctx.reply(
+        `📅 <b>Заявка №${id}</b>\n\n${currentDate}Укажите новую дату рейса одним сообщением (например: <code>15.04.2026</code>).`,
         {
           parse_mode: "HTML",
           reply_markup: kbCancelOnly(),

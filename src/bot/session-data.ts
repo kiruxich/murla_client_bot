@@ -44,7 +44,7 @@ export const emptyOrderDraft = (): OrderDraft => ({
 });
 
 /** По какому списку клиент зашёл в заявку — для «К списку». */
-export type ClientOrdersListMode = "all" | "drafts" | "active";
+export type ClientOrdersListMode = "all" | "drafts" | "active" | "archive";
 
 /** Активные заявки или архив (выполненные) — для «К списку» у работника склада и водителя. */
 export type StaffOrdersListSource = "active" | "archive";
