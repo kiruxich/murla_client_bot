@@ -558,13 +558,19 @@ async function handleCreateOrder(req: any, res: any, uid: number, token: string)
     const { NOTIFY_ON_STATUS } = await import("../src/config/notifications.js");
     const { ROLE_WHITELIST } = await import("../src/config/role-whitelist.js");
 
-    const registered = await isClientRegistered(uid);
-    if (!registered) {
-      res.status(403).json({ ok: false, error: "not_registered" });
-      return;
+    const body = req.body || {};
+    const clientId = body?.clientId ? parseInt(String(body.clientId)) : uid;
+    const isProxyOrder = !!body?.clientId;
+
+    // Для прямого создания нужна регистрация
+    if (!isProxyOrder) {
+      const registered = await isClientRegistered(uid);
+      if (!registered) {
+        res.status(403).json({ ok: false, error: "not_registered" });
+        return;
+      }
     }
 
-    const body = req.body || {};
     const product = typeof body?.product === "string" ? body.product.trim() : "";
     const quantityText = typeof body?.quantity === "string" ? body.quantity.trim() : "";
     const tz = typeof body?.tz === "string" ? body.tz.trim() : "";
@@ -602,7 +608,7 @@ async function handleCreateOrder(req: any, res: any, uid: number, token: string)
     }
 
     const order = await orderStore.create({
-      clientTelegramId: uid,
+      clientTelegramId: clientId,
       clientUsername: undefined,
       product,
       quantityText,
@@ -621,10 +627,11 @@ async function handleCreateOrder(req: any, res: any, uid: number, token: string)
       ],
     };
 
+    // Отправляем уведомление клиенту (даже если создание было от менеджера)
     await sendTelegramMessage(
       token,
-      uid,
-      `✅ <b>Черновик №${order.id}</b> создан из приложения.\n\n` +
+      clientId,
+      `✅ <b>Черновик №${order.id}</b> создан${isProxyOrder ? " менеджером" : ""}.\n\n` +
         formatOrderHtml(order) +
         "\n\nНажмите «Отправить в работу», чтобы статус стал «Принято в работу».",
       kb,
