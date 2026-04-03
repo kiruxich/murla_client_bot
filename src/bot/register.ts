@@ -170,7 +170,7 @@ const sortOrdersByUpdatedDesc = (orders: FulfillmentOrder[]): FulfillmentOrder[]
 
 const MURLA_SITE_URL = "https://murla.company";
 const MURLA_GROUP_TG_URL = "https://t.me/MurlaWbOzonFF";
-const MINIAPP_CACHE_BUSTER = "20260402-2";
+const MINIAPP_CACHE_BUSTER = "20260403-1";
 
 const withMiniappVersion = (url: string): string => {
   try {
