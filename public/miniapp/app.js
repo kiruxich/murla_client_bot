@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-02-cv20260402-7";
+const APP_BUILD = "2026-04-03-cv20260403-1";
 
 tg.ready();
 tg.expand();
@@ -200,26 +200,46 @@ function renderPickupRows() {
     .join("");
 }
 
-function bindPickupInputs() {
-  document.querySelectorAll(".pickup-input").forEach((el) => {
-    el.addEventListener("input", (e) => {
-      const i = Number(e.target.dataset.idx);
-      formState.orderData.pickupAddresses[i] = e.target.value;
-      if (formState.errors.pickupAddresses) delete formState.errors.pickupAddresses;
-    });
+function reattachPickupListeners(form, pickupBlock) {
+  // Обработка input событий на pickup адреса
+  pickupBlock?.addEventListener("input", (e) => {
+    if (e.target.hasAttribute("data-pickup-idx")) {
+      const idx = parseInt(e.target.getAttribute("data-pickup-idx"));
+      formState.orderData.pickupAddresses[idx] = e.target.value;
+    }
   });
-  document.querySelectorAll("[data-remove]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const el = e.target.closest("[data-remove]");
-      const i = Number(el?.dataset?.remove);
-      if (Number.isNaN(i)) return;
-      formState.orderData.pickupAddresses.splice(i, 1);
-      if (formState.orderData.pickupAddresses.length === 0) {
-        formState.orderData.pickupAddresses = [""];
-      }
-      renderNewOrder();
-    });
+  
+  // Обработка click для удаления
+  pickupBlock?.addEventListener("click", (e) => {
+    if (e.target.hasAttribute("data-remove-pickup")) {
+      e.preventDefault();
+      const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
+      formState.orderData.pickupAddresses.splice(idx, 1);
+      // Обновляем только содержимое блока адресов, не всю форму
+      pickupBlock.innerHTML = `
+        ${renderPickupRows()}
+        <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
+        ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
+      `;
+      // Переподписываем события на новые элементы
+      reattachPickupListeners(form, pickupBlock);
+    }
   });
+  
+  const addPickupBtn = pickupBlock?.querySelector("#add-pickup");
+  if (addPickupBtn) {
+    addPickupBtn.addEventListener("click", () => {
+      formState.orderData.pickupAddresses.push("");
+      // Обновляем только содержимое блока адресов, не всю форму
+      pickupBlock.innerHTML = `
+        ${renderPickupRows()}
+        <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
+        ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
+      `;
+      // Переподписываем события на новые элементы
+      reattachPickupListeners(form, pickupBlock);
+    });
+  }
 }
 
 async function loadRegisteredClients() {
@@ -560,7 +580,6 @@ function renderNewOrder() {
       renderNewOrder();
     };
   }
-  bindPickupInputs();
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1831,27 +1850,6 @@ function goToCreateOrderForClient() {
     formState.orderData.warehouseId = e.target.value;
   });
 
-  // Обработка pickup адресов через event delegation
-  pickupBlock?.addEventListener("input", (e) => {
-    if (e.target.hasAttribute("data-pickup-idx")) {
-      const idx = parseInt(e.target.getAttribute("data-pickup-idx"));
-      formState.orderData.pickupAddresses[idx] = e.target.value;
-    }
-  });
-  
-  pickupBlock?.addEventListener("click", (e) => {
-    if (e.target.hasAttribute("data-remove-pickup")) {
-      e.preventDefault();
-      const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
-      formState.orderData.pickupAddresses.splice(idx, 1);
-      goToCreateOrderForClient();
-    }
-  });
-  document.getElementById("add-pickup")?.addEventListener("click", () => {
-    formState.orderData.pickupAddresses.push("");
-    goToCreateOrderForClient();
-  });
-
   // Обработка дат
   const dateStart = document.getElementById("date-start-picker");
   const dateEnd = document.getElementById("date-end-picker");
@@ -1894,6 +1892,9 @@ function goToCreateOrderForClient() {
     // Используем функцию submitOrder которая уже существует в коде
     submitProxyOrder();
   });
+
+  // Инициализируем обработчики для pickup адресов
+  reattachPickupListeners(form, pickupBlock);
 }
 
 function goToEditBusiness() {
