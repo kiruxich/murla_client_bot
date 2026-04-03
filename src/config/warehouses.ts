@@ -17,32 +17,31 @@ export type WarehousePoint = {
   note?: string;
 };
 
-/** Wildberries — крупные СЦ/склады (подборка; список на селлерских справочниках шире). */
+/** Wildberries — актуальные склады (синхронизированы с Mini App). */
 export const WB_WAREHOUSES: readonly WarehousePoint[] = [
-  { id: "wb_koledino", marketplace: "wb", label: "Коледино", note: "Подольск, Московская обл." },
-  { id: "wb_sofino", marketplace: "wb", label: "Софьино", note: "МО, технопарк Софьино" },
+  { id: "wb_koledino", marketplace: "wb", label: "Коледино", note: "Подольск" },
   { id: "wb_elektrostal", marketplace: "wb", label: "Электросталь", note: "Московская обл." },
-  { id: "wb_podolsk", marketplace: "wb", label: "Подольск", note: "Московская обл." },
-  { id: "wb_kazan", marketplace: "wb", label: "Казань", note: "Респ. Татарстан" },
-  { id: "wb_krasnodar", marketplace: "wb", label: "Краснодар", note: "Краснодарский край" },
-  { id: "wb_ekb", marketplace: "wb", label: "Екатеринбург", note: "Свердловская обл." },
-  { id: "wb_novosibirsk", marketplace: "wb", label: "Новосибирск", note: "Новосибирская обл." },
-  { id: "wb_spb_shushary", marketplace: "wb", label: "Шушары", note: "Санкт-Петербург / ЛО" },
-  { id: "wb_habarovsk", marketplace: "wb", label: "Хабаровск", note: "Хабаровский край" },
+  { id: "wb_ryazan", marketplace: "wb", label: "Рязань", note: "Рязанская обл." },
+  { id: "wb_tula", marketplace: "wb", label: "Тула (Алексин)", note: "Тульская обл." },
+  { id: "wb_podolsk_4", marketplace: "wb", label: "Подольск-4", note: "Московская обл." },
+  { id: "wb_obukhovo", marketplace: "wb", label: "Обухово", note: "Московская обл." },
+  { id: "wb_kotovsk", marketplace: "wb", label: "Котовск", note: "Тамбовская обл." },
+  { id: "wb_chehov", marketplace: "wb", label: "Чехов-1", note: "Московская обл." },
+  { id: "wb_belaya_dacha", marketplace: "wb", label: "Белая дача", note: "Московская обл." },
 ];
 
-/** Ozon — логистические центры (подборка; актуальный список уточняйте в кабинете Ozon). */
+/** Ozon — актуальные логистические центры (синхронизированы с Mini App). */
 export const OZON_WAREHOUSES: readonly WarehousePoint[] = [
-  { id: "ozon_sofino", marketplace: "ozon", label: "Софьино", note: "МО, технопарк Софьино" },
-  { id: "ozon_habarovsk", marketplace: "ozon", label: "Хабаровск", note: "Хабаровский край" },
-  { id: "ozon_kazan", marketplace: "ozon", label: "Казань", note: "Респ. Татарстан" },
-  { id: "ozon_krasnodar", marketplace: "ozon", label: "Краснодар", note: "Краснодарский край" },
-  { id: "ozon_rostov", marketplace: "ozon", label: "Ростов-на-Дону", note: "Ростовская обл." },
-  { id: "ozon_ekb", marketplace: "ozon", label: "Екатеринбург", note: "Свердловская обл." },
-  { id: "ozon_novosibirsk", marketplace: "ozon", label: "Новосибирск", note: "Новосибирская обл." },
-  { id: "ozon_spb", marketplace: "ozon", label: "Санкт-Петербург", note: "ЛО / СПб" },
-  { id: "ozon_tver", marketplace: "ozon", label: "Тверь", note: "Тверская обл." },
+  { id: "ozon_grivno", marketplace: "ozon", label: "Гривно", note: "Московская обл." },
   { id: "ozon_domodedovo", marketplace: "ozon", label: "Домодедово", note: "Московская обл." },
+  { id: "ozon_noginsk", marketplace: "ozon", label: "Ногинск", note: "Московская обл." },
+  { id: "ozon_pushkino", marketplace: "ozon", label: "Пушкино", note: "Московская обл." },
+  { id: "ozon_sofino", marketplace: "ozon", label: "Софьино", note: "МО" },
+  { id: "ozon_zhukovskiy", marketplace: "ozon", label: "Жуковский", note: "Московская обл." },
+  { id: "ozon_pavlovskaya", marketplace: "ozon", label: "Павловская слобода", note: "Московская обл." },
+  { id: "ozon_petrovskoe", marketplace: "ozon", label: "Петровское", note: "Московская обл." },
+  { id: "ozon_khoruzhino", marketplace: "ozon", label: "Хорухино", note: "Московская обл." },
+  { id: "ozon_radumlja", marketplace: "ozon", label: "Радумля", note: "Московская обл." },
 ];
 
 export const warehousesByMarketplace = (m: MarketplaceId): readonly WarehousePoint[] =>
