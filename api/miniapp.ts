@@ -38,7 +38,7 @@ async function sendTelegramMessage(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-type Action = "config" | "orders-list" | "order-detail" | "order-status" | "order-edit" | "drafts" | 
+type Action = "config" | "orders-list" | "order-detail" | "order-status" | "order-edit" | "drafts" |
   "edit-business" | "delete-draft" | "create-order" | "register" | "switch-role" | "clients-list";
 
 export default async (req: any, res: any): Promise<void> => {
@@ -187,11 +187,11 @@ async function handleOrdersList(req: any, res: any, uid: number, effectiveRole: 
       filteredOrders = allOrders.filter((o) => o.clientTelegramId === uid);
     } else if (effectiveRole === "packer") {
       filteredOrders = allOrders.filter((o) =>
-        ["accepted", "receiving", "receiving_done", "pack_sort"].includes(o.status)
+        ["accepted", "receiving", "receiving_done", "pack_sort", "ready_for_unload", "in_transit", "done", "cancelled"].includes(o.status)
       );
     } else if (effectiveRole === "driver") {
       filteredOrders = allOrders.filter((o) =>
-        ["ready_for_unload", "in_transit"].includes(o.status)
+        ["ready_for_unload", "in_transit", "done", "cancelled"].includes(o.status)
       );
     } else if (effectiveRole === "manager" || effectiveRole === "supervisor") {
       filteredOrders = allOrders;
@@ -275,7 +275,7 @@ async function handleOrderDetail(req: any, res: any, uid: number, effectiveRole:
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         driverUnloadPending: order.driverUnloadPending,
-        availableActions: getAvailableActions(effectiveRole, order.status),
+        availableActions: getAvailableActions(effectiveRole, order.status, order.approvedDeliveryDate),
       },
     });
   } catch (err) {
@@ -289,6 +289,8 @@ async function handleOrderStatus(req: any, res: any, uid: number, effectiveRole:
     const body = req.body || {};
     const orderId = body.id || "";
     const action = body.action || "";
+    const approvedDeliveryDateRaw = typeof body.approvedDeliveryDate === "string" ? body.approvedDeliveryDate : "";
+    const approvedDeliveryDate = approvedDeliveryDateRaw.trim();
 
     if (!orderId || !action) {
       res.status(400).json({ ok: false, error: "missing_params" });
@@ -309,6 +311,31 @@ async function handleOrderStatus(req: any, res: any, uid: number, effectiveRole:
       if (action === "send_to_sort" && order.status === "receiving_done") newStatus = "pack_sort";
       if (action === "ready_for_unload" && order.status === "pack_sort") newStatus = "ready_for_unload";
     } else if (effectiveRole === "driver") {
+      if (action === "set_delivery_date" && order.status === "ready_for_unload") {
+        if (!approvedDeliveryDate || approvedDeliveryDate.length > 200) {
+          res.status(400).json({ ok: false, error: "invalid_delivery_date" });
+          return;
+        }
+        const updatedWithDate = await orderStore.setApprovedDeliveryDate(orderId, approvedDeliveryDate);
+        if (!updatedWithDate) {
+          res.status(500).json({ ok: false, error: "update_failed" });
+          return;
+        }
+        res.status(200).json({
+          ok: true,
+          order: {
+            id: updatedWithDate.id,
+            status: updatedWithDate.status,
+            statusLabel: ORDER_STATUS_LABEL[updatedWithDate.status] || updatedWithDate.status,
+            approvedDeliveryDate: updatedWithDate.approvedDeliveryDate || null,
+          },
+        });
+        return;
+      }
+      if (action === "start_delivery" && order.status === "ready_for_unload" && !order.approvedDeliveryDate) {
+        res.status(400).json({ ok: false, error: "missing_delivery_date" });
+        return;
+      }
       if (action === "start_delivery" && order.status === "ready_for_unload") newStatus = "in_transit";
       if (action === "complete_delivery" && order.status === "in_transit") newStatus = "done";
     } else if (effectiveRole === "manager" || effectiveRole === "supervisor") {
@@ -316,6 +343,27 @@ async function handleOrderStatus(req: any, res: any, uid: number, effectiveRole:
       if (action === "finish_receiving") newStatus = "receiving_done";
       if (action === "send_to_sort") newStatus = "pack_sort";
       if (action === "ready_for_unload") newStatus = "ready_for_unload";
+      if (action === "set_delivery_date" && order.status === "ready_for_unload") {
+        if (!approvedDeliveryDate || approvedDeliveryDate.length > 200) {
+          res.status(400).json({ ok: false, error: "invalid_delivery_date" });
+          return;
+        }
+        const updatedWithDate = await orderStore.setApprovedDeliveryDate(orderId, approvedDeliveryDate);
+        if (!updatedWithDate) {
+          res.status(500).json({ ok: false, error: "update_failed" });
+          return;
+        }
+        res.status(200).json({
+          ok: true,
+          order: {
+            id: updatedWithDate.id,
+            status: updatedWithDate.status,
+            statusLabel: ORDER_STATUS_LABEL[updatedWithDate.status] || updatedWithDate.status,
+            approvedDeliveryDate: updatedWithDate.approvedDeliveryDate || null,
+          },
+        });
+        return;
+      }
       if (action === "start_delivery") newStatus = "in_transit";
       if (action === "complete_delivery") newStatus = "done";
     }
@@ -847,7 +895,7 @@ async function handleClientsList(req: any, res: any, uid: number, effectiveRole:
   }
 }
 
-function getAvailableActions(role: string, status: string): string[] {
+function getAvailableActions(role: string, status: string, approvedDeliveryDate?: string | null): string[] {
   const actions: string[] = [];
 
   if (role === "packer") {
@@ -856,14 +904,20 @@ function getAvailableActions(role: string, status: string): string[] {
     if (status === "receiving_done") actions.push("send_to_sort");
     if (status === "pack_sort") actions.push("ready_for_unload");
   } else if (role === "driver") {
-    if (status === "ready_for_unload") actions.push("start_delivery");
+    if (status === "ready_for_unload") {
+      actions.push("set_delivery_date");
+      actions.push("start_delivery");
+    }
     if (status === "in_transit") actions.push("complete_delivery");
   } else if (role === "manager" || role === "supervisor") {
     if (status === "accepted") actions.push("start_receiving");
     if (status === "receiving") actions.push("finish_receiving");
     if (status === "receiving_done") actions.push("send_to_sort");
     if (status === "pack_sort") actions.push("ready_for_unload");
-    if (status === "ready_for_unload") actions.push("start_delivery");
+    if (status === "ready_for_unload") {
+      actions.push("set_delivery_date");
+      actions.push("start_delivery");
+    }
     if (status === "in_transit") actions.push("complete_delivery");
     if (status === "draft") actions.push("finalize_order");
   }

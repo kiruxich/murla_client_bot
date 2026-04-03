@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-03-cv20260403-3";
+const APP_BUILD = "2026-04-03-cv20260403-4";
 
 tg.ready();
 tg.expand();
@@ -2100,6 +2100,7 @@ function getActionLabel(action) {
     finish_receiving: "✅ Приём завершён",
     send_to_sort: "📦 Начать сортировку",
     ready_for_unload: "🚛 Готово к рейсу",
+    set_delivery_date: "📅 Выбрать финальную дату",
     start_delivery: "🚛 Начать доставку",
     complete_delivery: "✅ Доставка завершена",
     finalize_order: "✅ Оформить заявку",
@@ -2141,6 +2142,22 @@ async function executeOrderAction(orderId, action, event) {
 
   try {
     const initData = getInitData();
+    let approvedDeliveryDate = "";
+    if (action === "set_delivery_date") {
+      const dateInput = window.prompt("Введите финальную дату доставки (например: 15.04.2026)");
+      if (dateInput === null) {
+        btn.disabled = false;
+        btn.textContent = getActionLabel(action);
+        return;
+      }
+      approvedDeliveryDate = String(dateInput).trim();
+      if (!approvedDeliveryDate) {
+        showNotification("⚠️ Укажите дату доставки");
+        btn.disabled = false;
+        btn.textContent = getActionLabel(action);
+        return;
+      }
+    }
     console.log("📤 Выполняю действие:", action, "для заявки:", orderId);
     const r = await fetch("/api/miniapp?action=order-status", {
       method: "POST",
@@ -2153,18 +2170,24 @@ async function executeOrderAction(orderId, action, event) {
         initData,
         id: orderId,
         action,
+        approvedDeliveryDate,
       }),
     });
     const j = await r.json();
     console.log("✅ Order status response:", j);
 
     if (j.ok) {
-      showNotification("✅ Статус обновлён!");
+      showNotification(action === "set_delivery_date" ? "✅ Финальная дата сохранена" : "✅ Статус обновлён!");
       setTimeout(() => {
         renderOrderDetail(orderId);
       }, 800);
     } else {
-      showNotification("❌ Ошибка: " + (j.error || "unknown"));
+      const errorText = j.error === "missing_delivery_date"
+        ? "Сначала выберите финальную дату доставки"
+        : j.error === "invalid_delivery_date"
+          ? "Некорректная дата доставки"
+          : (j.error || "unknown");
+      showNotification("❌ Ошибка: " + errorText);
       btn.disabled = false;
       btn.textContent = getActionLabel(action);
     }
