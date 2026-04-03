@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-03-cv20260403-1";
+const APP_BUILD = "2026-04-03-cv20260403-2";
 
 tg.ready();
 tg.expand();
@@ -200,52 +200,38 @@ function renderPickupRows() {
     .join("");
 }
 
-function reattachPickupListeners(form, pickupBlock) {
-  // Event delegation на форме - слушатели никогда не удаляются
-  // Input для редактирования адресов
-  const handlePickupInput = (e) => {
+function refreshPickupBlockHTML(block) {
+  block.innerHTML = `
+    <label>Точки забора</label>
+    ${renderPickupRows()}
+    <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
+    ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
+  `;
+}
+
+function bindPickupBlock(block) {
+  if (!block) return;
+  block.addEventListener("input", (e) => {
     if (e.target.hasAttribute("data-pickup-idx")) {
       const idx = parseInt(e.target.getAttribute("data-pickup-idx"));
       formState.orderData.pickupAddresses[idx] = e.target.value;
     }
-  };
-  
-  // Click для удаления адреса
-  const handlePickupClick = (e) => {
+  });
+  block.addEventListener("click", (e) => {
     if (e.target.hasAttribute("data-remove-pickup")) {
       e.preventDefault();
       const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
       formState.orderData.pickupAddresses.splice(idx, 1);
-      // Обновляем только содержимое блока адресов
-      pickupBlock.innerHTML = `
-        ${renderPickupRows()}
-        <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
-        ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
-      `;
+      if (formState.orderData.pickupAddresses.length === 0) {
+        formState.orderData.pickupAddresses = [""];
+      }
+      refreshPickupBlockHTML(block);
     }
-    
-    // Обработка клика на кнопку "Добавить"
     if (e.target.id === "add-pickup" || e.target.closest("#add-pickup")) {
       formState.orderData.pickupAddresses.push("");
-      pickupBlock.innerHTML = `
-        ${renderPickupRows()}
-        <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
-        ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
-      `;
+      refreshPickupBlockHTML(block);
     }
-  };
-  
-  // Удаляем старые слушатели если они есть
-  pickupBlock?.removeEventListener("input", pickupBlock._pickupInputListener);
-  pickupBlock?.removeEventListener("click", pickupBlock._pickupClickListener);
-  
-  // Сохраняем ссылки на функции чтобы потом удалить
-  pickupBlock._pickupInputListener = handlePickupInput;
-  pickupBlock._pickupClickListener = handlePickupClick;
-  
-  // Добавляем новые слушатели
-  pickupBlock?.addEventListener("input", handlePickupInput);
-  pickupBlock?.addEventListener("click", handlePickupClick);
+  });
 }
 
 async function loadRegisteredClients() {
@@ -500,13 +486,37 @@ function renderNewOrder() {
     if (e.target.checked && formState.orderData.pickupAddresses.length === 0) {
       formState.orderData.pickupAddresses = [""];
     }
-    renderNewOrder();
+    if (pickupBlock) {
+      pickupBlock.style.display = e.target.checked ? "" : "none";
+      if (e.target.checked) {
+        pickupBlock.innerHTML = `
+          <label>Точки забора</label>
+          ${renderPickupRows()}
+          <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
+          ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
+        `;
+        bindPickupBlock(pickupBlock);
+      }
+    }
   });
 
   form.querySelector('[name="marketplace"]').addEventListener("change", (e) => {
     formState.orderData.marketplace = e.target.value;
     formState.orderData.warehouseId = "";
-    renderNewOrder();
+    const warehouseSelect = form.querySelector('[name="warehouseId"]');
+    const mVal = e.target.value;
+    const wList = warehousesForMarketplace(mVal);
+    if (whGroup) {
+      whGroup.style.display = mVal ? "" : "none";
+    }
+    if (warehouseSelect) {
+      warehouseSelect.innerHTML = '<option value="">Выберите склад</option>' +
+        wList.map((w) => {
+          const isWb = mVal === "wb";
+          const cn = isWb ? "warehouse-option wb-warehouse" : "warehouse-option ozon-warehouse";
+          return `<option value="${escapeHtml(w.id)}" class="${cn}">${escapeHtml(w.label)}${w.note ? " — " + escapeHtml(w.note) : ""}</option>`;
+        }).join("");
+    }
   });
 
   form.addEventListener("input", (e) => {
@@ -579,13 +589,7 @@ function renderNewOrder() {
     };
   }
 
-  const addBtn = document.getElementById("add-pickup");
-  if (addBtn) {
-    addBtn.onclick = () => {
-      formState.orderData.pickupAddresses.push("");
-      renderNewOrder();
-    };
-  }
+  bindPickupBlock(pickupBlock);
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1839,12 +1843,8 @@ function goToCreateOrderForClient() {
     if (pickupBlockElement) {
       pickupBlockElement.style.display = e.target.checked ? "" : "none";
       if (e.target.checked) {
-        pickupBlockElement.innerHTML = `
-          ${renderPickupRows()}
-          <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
-          ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
-        `;
-        reattachPickupListeners(form, pickupBlockElement);
+        refreshPickupBlockHTML(pickupBlockElement);
+        bindPickupBlock(pickupBlockElement);
       }
     }
   });
@@ -1924,7 +1924,7 @@ function goToCreateOrderForClient() {
   });
 
   // Инициализируем обработчики для pickup адресов
-  reattachPickupListeners(form, pickupBlock);
+  bindPickupBlock(pickupBlock);
 }
 
 function goToEditBusiness() {
