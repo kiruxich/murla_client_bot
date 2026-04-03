@@ -610,6 +610,7 @@ async function handleCreateOrder(req: any, res: any, uid: number, token: string)
     const order = await orderStore.create({
       clientTelegramId: clientId,
       clientUsername: undefined,
+      createdByTelegramId: isProxyOrder ? uid : undefined,
       product,
       quantityText,
       tz,

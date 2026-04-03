@@ -153,7 +153,7 @@ const sqliteNextId = (): string => {
   const res = database.exec(
     "SELECT MAX(CAST(id AS INTEGER)) AS m FROM orders WHERE id GLOB '[0-9]*'",
   );
-  let max = 100;
+  let max = 0;
   if (res.length > 0 && res[0].values.length > 0) {
     const v = res[0].values[0][0];
     if (typeof v === "number" && !Number.isNaN(v)) {
@@ -249,12 +249,12 @@ const pgNextId = async (): Promise<string> => {
   const sql = getNeonSql();
   const rows = asRowRecords(
     await sql`
-    SELECT COALESCE(MAX(CAST(id AS INTEGER)), 100) AS m
+    SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) AS m
     FROM orders
     WHERE id ~ '^[0-9]+$'
   `,
   );
-  const m = Number((rows[0] as { m: number } | undefined)?.m ?? 100);
+  const m = Number((rows[0] as { m: number } | undefined)?.m ?? 0);
   return String(m + 1);
 };
 
@@ -317,6 +317,9 @@ const pgReplaceOrder = async (o: FulfillmentOrder): Promise<void> => {
 export const orderStore = {
   async create(input: CreateOrderInput): Promise<FulfillmentOrder> {
     const now = Date.now();
+    // Если создается менеджером "за клиента", статус = accepted, иначе draft
+    const status: OrderStatusId = input.createdByTelegramId ? "accepted" : "draft";
+    
     if (getDbBackend() === "postgres") {
       const id = await pgNextId();
       const o: FulfillmentOrder = {
@@ -324,7 +327,7 @@ export const orderStore = {
         clientTelegramId: input.clientTelegramId,
         clientUsername: input.clientUsername,
         createdByTelegramId: input.createdByTelegramId,
-        status: "draft",
+        status,
         product: input.product,
         quantityText: input.quantityText,
         tz: input.tz,
@@ -345,7 +348,7 @@ export const orderStore = {
       clientTelegramId: input.clientTelegramId,
       clientUsername: input.clientUsername,
       createdByTelegramId: input.createdByTelegramId,
-      status: "draft",
+      status,
       product: input.product,
       quantityText: input.quantityText,
       tz: input.tz,
