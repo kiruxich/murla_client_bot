@@ -1869,8 +1869,8 @@ function goToCreateOrderForClient() {
       showNotification("⚠️ Выберите клиента");
       return;
     }
-    // Валидация и отправка как обычная заявка (тип "proxy")
-    saveOrder("proxy");
+    // Используем функцию submitOrder которая уже существует в коде
+    submitProxyOrder();
   });
 }
 
@@ -2137,6 +2137,186 @@ function validateOrder() {
   }
   formState.errors = errors;
   return Object.keys(errors).length === 0;
+}
+
+function submitProxyOrder() {
+  if (!validateOrder()) {
+    goToCreateOrderForClient();
+    return;
+  }
+  
+  const form = document.getElementById("proxy-order-form");
+  const clientId = form.querySelector('[name="clientId"]').value.trim();
+  
+  if (!clientId) {
+    showNotification("⚠️ Выберите клиента");
+    return;
+  }
+
+  const d = formState.orderData;
+  const pickupAddresses = d.needsPickup
+    ? d.pickupAddresses.map((a) => a.trim()).filter(Boolean)
+    : [];
+
+  const orderData = {
+    clientId: clientId,
+    product: d.product.trim(),
+    quantity: d.quantity.trim(),
+    tz: d.tz.trim(),
+    needsPickup: d.needsPickup,
+    marketplace: d.marketplace,
+    warehouseId: d.warehouseId,
+    pickupAddresses,
+    desiredDeliveryDate: d.desiredDeliveryDate.trim(),
+    comment: d.comment.trim(),
+    timestamp: new Date().toISOString(),
+  };
+
+  showProxyOrderSummary(orderData);
+}
+
+function showProxyOrderSummary(orderData) {
+  const pickupList = orderData.pickupAddresses.length > 0
+    ? `<div class="summary-section">
+        <strong>📍 Точки забора:</strong>
+        ${orderData.pickupAddresses.map((a) => `<p>• ${escapeHtml(a)}</p>`).join("")}
+      </div>`
+    : "";
+
+  const whLabel = OZON_WAREHOUSES.concat(WB_WAREHOUSES).find((w) => w.id === orderData.warehouseId)?.label || orderData.warehouseId;
+
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <h2>✅ Подтверждение заявки за клиента</h2>
+      </div>
+      <div class="summary-card">
+        <div class="summary-section">
+          <strong>👤 Клиент:</strong>
+          <p>${escapeHtml(orderData.clientId)}</p>
+        </div>
+        <div class="summary-section">
+          <strong>📦 Товар:</strong>
+          <p>${escapeHtml(orderData.product)}</p>
+        </div>
+        <div class="summary-section">
+          <strong>📊 Количество:</strong>
+          <p>${escapeHtml(orderData.quantity)}</p>
+        </div>
+        <div class="summary-section">
+          <strong>📝 ТЗ (условия):</strong>
+          <p>${escapeHtml(orderData.tz)}</p>
+        </div>
+        ${
+          orderData.needsPickup
+            ? `<div class="summary-section">
+                <strong>🚚 Нужен забор:</strong>
+                <p>Да</p>
+              </div>`
+            : ""
+        }
+        ${pickupList}
+        <div class="summary-section">
+          <strong>🏪 Маркетплейс:</strong>
+          <p>${orderData.marketplace === "wb" ? "Wildberries" : "Ozon"}</p>
+        </div>
+        <div class="summary-section">
+          <strong>📍 Склад назначения:</strong>
+          <p>${escapeHtml(whLabel)}</p>
+        </div>
+        ${
+          orderData.desiredDeliveryDate
+            ? `<div class="summary-section">
+                <strong>📅 Желаемая дата поставки:</strong>
+                <p>${escapeHtml(orderData.desiredDeliveryDate)}</p>
+              </div>`
+            : ""
+        }
+        ${
+          orderData.comment
+            ? `<div class="summary-section">
+                <strong>💬 Комментарий:</strong>
+                <p>${escapeHtml(orderData.comment)}</p>
+              </div>`
+            : ""
+        }
+        <div style="margin-top: 20px; display: flex; gap: 8px; flex-direction: column;">
+          <button type="button" class="btn btn-primary" id="confirm-proxy-order">✅ Создать заявку</button>
+          <button type="button" class="btn btn-secondary" id="edit-proxy-order">✏️ Редактировать</button>
+        </div>
+      </div>
+    </div>`;
+
+  formState.step = "proxy-order-summary";
+
+  document.getElementById("confirm-proxy-order").onclick = async () => {
+    const confirmBtn = document.getElementById("confirm-proxy-order");
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Отправка…";
+    }
+
+    try {
+      const initData = getInitData();
+      const r = await fetch("/api/miniapp?action=create-order", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
+        body: JSON.stringify({
+          initData,
+          clientId: orderData.clientId,
+          product: orderData.product,
+          quantity: orderData.quantity,
+          tz: orderData.tz,
+          needsPickup: orderData.needsPickup,
+          marketplace: orderData.marketplace,
+          warehouseId: orderData.warehouseId,
+          pickupAddresses: orderData.pickupAddresses,
+          desiredDeliveryDate: orderData.desiredDeliveryDate,
+          comment: orderData.comment,
+        }),
+      });
+      const j = await r.json();
+      console.log("✅ create-order response (proxy):", j);
+      if (j.ok) {
+        showNotification("✅ Заявка №" + j.orderId + " создана за клиента!");
+        formState.orderData = {
+          clientId: "",
+          product: "",
+          quantity: "",
+          tz: "",
+          needsPickup: false,
+          marketplace: "",
+          warehouseId: "",
+          pickupAddresses: [""],
+          desiredDeliveryDate: "",
+          comment: "",
+        };
+        formState.errors = {};
+        setTimeout(() => goToMain(), 1500);
+      } else {
+        showNotification("❌ Ошибка: " + (j.error || "Неизвестная ошибка"));
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = "✅ Создать заявку";
+        }
+      }
+    } catch (err) {
+      console.error("Error creating proxy order:", err);
+      showNotification("❌ Ошибка отправки: " + err.message);
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "✅ Создать заявку";
+      }
+    }
+  };
+
+  document.getElementById("edit-proxy-order").onclick = () => {
+    goToCreateOrderForClient();
+  };
 }
 
 function submitOrder() {
