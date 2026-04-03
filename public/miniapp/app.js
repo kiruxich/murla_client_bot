@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-02-cv20260402-4";
+const APP_BUILD = "2026-04-02-cv20260402-5";
 
 tg.ready();
 tg.expand();
@@ -1809,7 +1809,11 @@ function goToCreateOrderForClient() {
     if (t.name === "quantity") formState.orderData.quantity = t.value;
     if (t.name === "tz") formState.orderData.tz = t.value;
     if (t.name === "comment") formState.orderData.comment = t.value;
-    if (t.name === "warehouseId") formState.orderData.warehouseId = t.value;
+  });
+
+  // Обработка изменения SELECT элементов
+  form.querySelector('[name="warehouseId"]')?.addEventListener("change", (e) => {
+    formState.orderData.warehouseId = e.target.value;
   });
 
   // Обработка pickup адресов через event delegation
