@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-03-cv20260403-4";
+const APP_BUILD = "2026-04-03-cv20260403-5";
 
 tg.ready();
 tg.expand();
@@ -2021,19 +2021,14 @@ async function renderOrderDetail(orderId) {
         </div>
 
         <!-- Дополнительно -->
-        ${o.desiredDeliveryDate ? `
         <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
           <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">📅 Желаемая дата поставки</p>
-          <p style="font-size: 14px; font-weight: 600; margin: 0;">${escapeHtml(o.desiredDeliveryDate)}</p>
+          <p style="font-size: 14px; font-weight: 600; margin: 0;">${o.desiredDeliveryDate ? escapeHtml(o.desiredDeliveryDate) : "Не выбрана"}</p>
         </div>
-        ` : ""}
-
-        ${o.approvedDeliveryDate ? `
         <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
-          <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">✅ Утверждённая дата</p>
-          <p style="font-size: 14px; font-weight: 600; margin: 0;">${escapeHtml(o.approvedDeliveryDate)}</p>
+          <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">📌 Финальная дата поставки</p>
+          <p style="font-size: 14px; font-weight: 600; margin: 0;">${o.approvedDeliveryDate ? escapeHtml(o.approvedDeliveryDate) : "Не выбрана"}</p>
         </div>
-        ` : ""}
 
         ${o.comment ? `
         <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
@@ -2065,7 +2060,7 @@ async function renderOrderDetail(orderId) {
         btn.type = "button";
         btn.className = "btn btn-primary";
         btn.textContent = getActionLabel(action);
-        btn.onclick = (e) => executeOrderAction(orderId, action, e);
+        btn.onclick = (e) => executeOrderAction(orderId, action, e, o.approvedDeliveryDate || "");
         actionsContainer.appendChild(btn);
       }
     }
@@ -2131,7 +2126,62 @@ function renderStatusStep(label, currentStatus, stepStatus) {
     </div>`;
 }
 
-async function executeOrderAction(orderId, action, event) {
+function openFinalDeliveryDateModal(currentValue = "") {
+  return new Promise((resolve) => {
+    const currentIso = currentValue.includes("-")
+      ? currentValue
+      : formatDateToIso(currentValue);
+    const overlay = document.createElement("div");
+    overlay.style.cssText = [
+      "position: fixed",
+      "inset: 0",
+      "background: rgba(0,0,0,0.6)",
+      "display: flex",
+      "align-items: center",
+      "justify-content: center",
+      "z-index: 9999",
+      "padding: 16px",
+    ].join(";");
+    overlay.innerHTML = `
+      <div style="width: 100%; max-width: 380px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
+        <p style="margin: 0 0 10px 0; font-size: 16px; font-weight: 700;">Финальная дата поставки</p>
+        <p style="margin: 0 0 12px 0; font-size: 12px; color: var(--secondary-color);">Выберите дату перед началом доставки</p>
+        <input id="final-date-input" type="date" value="${escapeHtml(currentIso)}" style="width: 100%; box-sizing: border-box; border: 1px solid var(--border-color); border-radius: 8px; background: var(--input-bg); color: var(--text-color); padding: 10px;" />
+        <div style="display: flex; gap: 8px; margin-top: 12px;">
+          <button type="button" id="final-date-cancel" class="btn btn-secondary" style="flex: 1;">Отмена</button>
+          <button type="button" id="final-date-save" class="btn btn-primary" style="flex: 1;">Сохранить</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const cleanup = () => {
+      overlay.remove();
+    };
+
+    const cancelBtn = overlay.querySelector("#final-date-cancel");
+    const saveBtn = overlay.querySelector("#final-date-save");
+    const input = overlay.querySelector("#final-date-input");
+
+    cancelBtn?.addEventListener("click", () => {
+      cleanup();
+      resolve(null);
+    });
+
+    saveBtn?.addEventListener("click", () => {
+      const selectedIso = input?.value || "";
+      if (!selectedIso) {
+        showNotification("⚠️ Укажите дату доставки");
+        return;
+      }
+      const displayDate = formatDateFromIso(selectedIso) || selectedIso;
+      cleanup();
+      resolve(displayDate);
+    });
+  });
+}
+
+async function executeOrderAction(orderId, action, event, currentApprovedDeliveryDate = "") {
   const btn = event?.target;
   if (!btn) {
     showNotification("❌ Не удалось выполнить действие");
@@ -2144,13 +2194,13 @@ async function executeOrderAction(orderId, action, event) {
     const initData = getInitData();
     let approvedDeliveryDate = "";
     if (action === "set_delivery_date") {
-      const dateInput = window.prompt("Введите финальную дату доставки (например: 15.04.2026)");
-      if (dateInput === null) {
+      const selectedDate = await openFinalDeliveryDateModal(currentApprovedDeliveryDate);
+      if (selectedDate === null) {
         btn.disabled = false;
         btn.textContent = getActionLabel(action);
         return;
       }
-      approvedDeliveryDate = String(dateInput).trim();
+      approvedDeliveryDate = String(selectedDate).trim();
       if (!approvedDeliveryDate) {
         showNotification("⚠️ Укажите дату доставки");
         btn.disabled = false;
