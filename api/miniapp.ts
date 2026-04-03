@@ -39,7 +39,7 @@ async function sendTelegramMessage(
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type Action = "config" | "orders-list" | "order-detail" | "order-status" | "order-edit" | "drafts" | 
-  "edit-business" | "delete-draft" | "create-order" | "register" | "switch-role";
+  "edit-business" | "delete-draft" | "create-order" | "register" | "switch-role" | "clients-list";
 
 export default async (req: any, res: any): Promise<void> => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -127,6 +127,8 @@ export default async (req: any, res: any): Promise<void> => {
         return handleRegister(req, res, uid, token);
       case "switch-role":
         return handleSwitchRole(req, res, uid, token);
+      case "clients-list":
+        return handleClientsList(req, res, uid, effectiveRole);
       default:
         res.status(400).json({ ok: false, error: "unknown_action" });
     }
@@ -785,6 +787,41 @@ async function handleSwitchRole(req: any, res: any, uid: number, token: string) 
     res.status(200).json({ ok: true, newRole: selectedRole });
   } catch (err) {
     console.error("[miniapp] switch-role error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+}
+
+async function handleClientsList(req: any, res: any, uid: number, effectiveRole: string) {
+  try {
+    // Только менеджер/управляющий могут загружать список клиентов
+    if (effectiveRole !== "manager" && effectiveRole !== "supervisor") {
+      res.status(403).json({ ok: false, error: "access_denied" });
+      return;
+    }
+
+    const allOrders = await orderStore.list();
+    
+    // Собираем уникальных клиентов из всех заявок
+    const clientsMap = new Map<number, { id: number; username?: string; businessName?: string }>();
+    
+    for (const order of allOrders) {
+      if (!clientsMap.has(order.clientTelegramId)) {
+        clientsMap.set(order.clientTelegramId, {
+          id: order.clientTelegramId,
+          username: order.clientUsername,
+          businessName: order.clientUsername, // В боте это может быть businessName
+        });
+      }
+    }
+
+    const clients = Array.from(clientsMap.values()).sort((a, b) => a.id - b.id);
+
+    res.status(200).json({
+      ok: true,
+      clients,
+    });
+  } catch (err) {
+    console.error("[miniapp] clients-list error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 }

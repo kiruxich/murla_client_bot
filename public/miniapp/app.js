@@ -221,6 +221,30 @@ function bindPickupInputs() {
   });
 }
 
+async function loadRegisteredClients() {
+  try {
+    const initData = getInitData();
+    const r = await fetch(`/api/miniapp?action=clients-list&initData=${encodeURIComponent(initData)}`, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+      },
+    });
+    
+    if (!r.ok) {
+      console.error('Ошибка загрузки клиентов:', r.status);
+      return [];
+    }
+
+    const data = await r.json();
+    return data.clients || [];
+  } catch (err) {
+    console.error('Ошибка загрузки клиентов:', err);
+    return [];
+  }
+}
+
 function renderMain() {
   const roleLabel = {
     client: "Клиент",
@@ -1659,9 +1683,10 @@ function goToCreateOrderForClient() {
       </div>
       <form class="form" id="proxy-order-form">
         <div class="form-group">
-          <label>Клиент (ID или username) *</label>
-          <input type="text" name="clientId" placeholder="ID: 123456789 или @username"
-            value="${escapeHtml(d.clientId || "")}" class="${err.clientId ? "input-error" : ""}" />
+          <label>Выберите клиента *</label>
+          <select name="clientId" id="client-select" class="${err.clientId ? "input-error" : ""}">
+            <option value="">⏳ Загрузка клиентов...</option>
+          </select>
           ${err.clientId ? `<span class="error-text">${escapeHtml(err.clientId)}</span>` : ""}
         </div>
         <div class="form-group">
@@ -1736,7 +1761,32 @@ function goToCreateOrderForClient() {
   document.getElementById("back-from-proxy-order").onclick = () => goToMain();
 
   const form = document.getElementById("proxy-order-form");
+  const clientSelect = document.getElementById("client-select");
   const pickupBlock = form.querySelector(".pickup-block");
+
+  // Загружаем список клиентов асинхронно
+  loadRegisteredClients().then(clients => {
+    clientSelect.innerHTML = '<option value="">Выберите клиента</option>';
+    if (clients.length === 0) {
+      clientSelect.innerHTML = '<option value="">Нет зарегистрированных клиентов</option>';
+      clientSelect.disabled = true;
+      return;
+    }
+    for (const client of clients) {
+      const opt = document.createElement('option');
+      opt.value = client.id;
+      opt.textContent = `${client.username || client.id} (${client.businessName || 'без названия'})`;
+      if (d.clientId === String(client.id)) opt.selected = true;
+      clientSelect.appendChild(opt);
+    }
+  }).catch(err => {
+    console.error('Ошибка загрузки клиентов:', err);
+    clientSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
+  });
+
+  clientSelect.addEventListener("change", (e) => {
+    formState.orderData.clientId = e.target.value;
+  });
 
   form.querySelector('[name="needsPickup"]').addEventListener("change", (e) => {
     formState.orderData.needsPickup = e.target.checked;
@@ -1759,7 +1809,6 @@ function goToCreateOrderForClient() {
     if (t.name === "tz") formState.orderData.tz = t.value;
     if (t.name === "comment") formState.orderData.comment = t.value;
     if (t.name === "warehouseId") formState.orderData.warehouseId = t.value;
-    if (t.name === "clientId") formState.orderData.clientId = t.value;
   });
 
   // Обработка pickup адресов
@@ -1817,7 +1866,7 @@ function goToCreateOrderForClient() {
     e.preventDefault();
     const clientId = form.querySelector('[name="clientId"]').value.trim();
     if (!clientId) {
-      showNotification("⚠️ Укажите клиента");
+      showNotification("⚠️ Выберите клиента");
       return;
     }
     // Валидация и отправка как обычная заявка (тип "proxy")
