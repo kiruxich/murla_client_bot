@@ -13,38 +13,9 @@
     "api/telegram.ts": {
       "maxDuration": 30
     },
-    "api/miniapp-config.ts": {
-      "maxDuration": 10
-    },
-    "api/miniapp-switch-role.ts": {
-      "maxDuration": 10
-    },
-    "api/miniapp-create-order.ts": {
-      "maxDuration": 15
-    },
-    "api/miniapp-register.ts": {
-      "maxDuration": 10
-    },
-    "api/miniapp-orders-list.ts": {
-      "maxDuration": 15
-    },
-    "api/miniapp-order-detail.ts": {
-      "maxDuration": 10
-    },
-    "api/miniapp-order-status.ts": {
-      "maxDuration": 15
-    },
-    "api/miniapp-order-edit.ts": {
-      "maxDuration": 15
-    },
-    "api/miniapp-drafts.ts": {
-      "maxDuration": 10
-    },
-    "api/miniapp-edit-business.ts": {
-      "maxDuration": 10
-    },
-    "api/miniapp-delete-draft.ts": {
-      "maxDuration": 10
+    "api/miniapp.ts": {
+      "maxDuration": 30
     }
   }
 }
+
