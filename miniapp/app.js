@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-02-cv20260402-5";
+const APP_BUILD = "2026-04-02-cv20260402-6";
 
 tg.ready();
 tg.expand();
@@ -2105,7 +2105,7 @@ async function executeOrderAction(orderId, action, event) {
       },
       body: JSON.stringify({
         initData,
-        orderId,
+        id: orderId,
         action,
       }),
     });
