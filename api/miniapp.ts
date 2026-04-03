@@ -800,17 +800,28 @@ async function handleClientsList(req: any, res: any, uid: number, effectiveRole:
     }
 
     const allOrders = await orderStore.list();
+    const { getBusinessNamesForTelegramIds } = await import("../src/store/client-store.js");
     
     // Собираем уникальных клиентов из всех заявок
+    const clientIds = new Set<number>();
     const clientsMap = new Map<number, { id: number; username?: string; businessName?: string }>();
     
     for (const order of allOrders) {
       if (!clientsMap.has(order.clientTelegramId)) {
+        clientIds.add(order.clientTelegramId);
         clientsMap.set(order.clientTelegramId, {
           id: order.clientTelegramId,
           username: order.clientUsername,
-          businessName: order.clientUsername, // В боте это может быть businessName
+          businessName: undefined, // будет заполнено ниже
         });
+      }
+    }
+
+    // Загружаем актуальные названия магазинов
+    if (clientIds.size > 0) {
+      const businessNames = await getBusinessNamesForTelegramIds(Array.from(clientIds));
+      for (const [id, client] of clientsMap.entries()) {
+        client.businessName = businessNames.get(id) || undefined;
       }
     }
 

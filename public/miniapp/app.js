@@ -1811,19 +1811,21 @@ function goToCreateOrderForClient() {
     if (t.name === "warehouseId") formState.orderData.warehouseId = t.value;
   });
 
-  // Обработка pickup адресов
-  pickupBlock?.querySelectorAll('[data-pickup-idx]').forEach((inp) => {
-    inp.addEventListener("input", (e) => {
+  // Обработка pickup адресов через event delegation
+  pickupBlock?.addEventListener("input", (e) => {
+    if (e.target.hasAttribute("data-pickup-idx")) {
       const idx = parseInt(e.target.getAttribute("data-pickup-idx"));
       formState.orderData.pickupAddresses[idx] = e.target.value;
-    });
+    }
   });
-  pickupBlock?.querySelectorAll('[data-remove-pickup]').forEach((btn) => {
-    btn.addEventListener("click", (e) => {
+  
+  pickupBlock?.addEventListener("click", (e) => {
+    if (e.target.hasAttribute("data-remove-pickup")) {
+      e.preventDefault();
       const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
       formState.orderData.pickupAddresses.splice(idx, 1);
       goToCreateOrderForClient();
-    });
+    }
   });
   document.getElementById("add-pickup")?.addEventListener("click", () => {
     formState.orderData.pickupAddresses.push("");
