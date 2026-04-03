@@ -336,7 +336,7 @@ function renderMain() {
     document.getElementById("btn-driver-orders")?.addEventListener("click", () => goToOrderList("driver", "all"));
     document.getElementById("btn-driver-archive")?.addEventListener("click", () => goToOrderList("driver", "archive"));
   } else if (role === "manager" || role === "supervisor") {
-    document.getElementById("btn-proxy-order")?.addEventListener("click", () => showNotification("➕ Заявка за клиента — в разработке"));
+    document.getElementById("btn-proxy-order")?.addEventListener("click", () => goToCreateOrderForClient());
     document.getElementById("btn-all-orders")?.addEventListener("click", () => goToOrderList("staff", "all"));
     document.getElementById("btn-report")?.addEventListener("click", () => showNotification("📊 Отчёт — в разработке"));
   }
@@ -1000,7 +1000,7 @@ async function renderOrderList(roleFilter = "client", typeFilter = "all") {
   try {
     const initData = getInitData();
     console.log("📥 Загружаю список заявок...");
-    const r = await fetch(`/api/miniapp?action=orders-list?initData=${encodeURIComponent(initData)}`, {
+    const r = await fetch(`/api/miniapp?action=orders-list&initData=${encodeURIComponent(initData)}`, {
       method: "GET",
       cache: "no-store",
       headers: {
@@ -1635,6 +1635,196 @@ function goToDrafts() {
   renderDrafts();
 }
 
+function goToCreateOrderForClient() {
+  // Форма для создания заявки "за клиента"
+  const d = formState.orderData;
+  const err = formState.errors;
+  const m = d.marketplace;
+  const whList = warehousesForMarketplace(m);
+  const whOpts = whList
+    .map((w) => {
+      const isWb = m === "wb";
+      const className = isWb ? "warehouse-option wb-warehouse" : "warehouse-option ozon-warehouse";
+      return `<option value="${escapeHtml(w.id)}" ${d.warehouseId === w.id ? "selected" : ""} class="${className}">${escapeHtml(w.label)}${
+        w.note ? " — " + escapeHtml(w.note) : ""
+      }</option>`;
+    })
+    .join("");
+
+  app.innerHTML = `
+    <div class="container">
+      <div class="header">
+        <button class="back-btn" type="button" id="back-from-proxy-order">← Назад</button>
+        <h2>Заявка за клиента</h2>
+      </div>
+      <form class="form" id="proxy-order-form">
+        <div class="form-group">
+          <label>Клиент (ID или username) *</label>
+          <input type="text" name="clientId" placeholder="ID: 123456789 или @username"
+            value="${escapeHtml(d.clientId || "")}" class="${err.clientId ? "input-error" : ""}" />
+          ${err.clientId ? `<span class="error-text">${escapeHtml(err.clientId)}</span>` : ""}
+        </div>
+        <div class="form-group">
+          <label>Товар *</label>
+          <input type="text" name="product" placeholder="Например: куртка красная XL"
+            value="${escapeHtml(d.product)}" class="${err.product ? "input-error" : ""}" />
+          ${err.product ? `<span class="error-text">${escapeHtml(err.product)}</span>` : ""}
+        </div>
+        <div class="form-group">
+          <label>Количество *</label>
+          <input type="text" name="quantity" placeholder="Например: 10 шт"
+            value="${escapeHtml(d.quantity)}" class="${err.quantity ? "input-error" : ""}" />
+          ${err.quantity ? `<span class="error-text">${escapeHtml(err.quantity)}</span>` : ""}
+        </div>
+        <div class="form-group">
+          <label>ТЗ (условия) *</label>
+          <textarea name="tz" placeholder="Техническое задание, размеры, особенности..."
+            class="${err.tz ? "input-error" : ""}">${escapeHtml(d.tz)}</textarea>
+          ${err.tz ? `<span class="error-text">${escapeHtml(err.tz)}</span>` : ""}
+        </div>
+        <div class="form-group">
+          <label>Нужен забор товара?</label>
+          <label class="checkbox-label">
+            <input type="checkbox" name="needsPickup" ${d.needsPickup ? "checked" : ""} />
+            Да, со своей точки
+          </label>
+        </div>
+        <div class="form-group pickup-block" style="${d.needsPickup ? "" : "display:none;"}">
+          <label>Точки забора</label>
+          ${renderPickupRows()}
+          <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
+          ${err.pickupAddresses ? `<span class="error-text">${escapeHtml(err.pickupAddresses)}</span>` : ""}
+        </div>
+        <div class="form-group">
+          <label>Маркетплейс *</label>
+          <select name="marketplace" class="${err.marketplace ? "input-error" : ""}">
+            <option value="">Выберите</option>
+            <option value="wb" ${m === "wb" ? "selected" : ""}>Wildberries</option>
+            <option value="ozon" ${m === "ozon" ? "selected" : ""}>Ozon</option>
+          </select>
+          ${err.marketplace ? `<span class="error-text">${escapeHtml(err.marketplace)}</span>` : ""}
+        </div>
+        <div class="form-group" style="${m ? "" : "display:none;"}">
+          <label>Склад назначения *</label>
+          <select name="warehouseId" class="${err.warehouseId ? "input-error" : ""}">
+            <option value="">Выберите склад</option>
+            ${whOpts}
+          </select>
+          ${err.warehouseId ? `<span class="error-text">${escapeHtml(err.warehouseId)}</span>` : ""}
+        </div>
+        <div class="form-group">
+          <label>Желаемая дата поставки (диапазон)</label>
+          <div class="date-range-container">
+            <input type="date" id="date-start-picker" class="date-range-input" />
+            <span class="date-range-separator">—</span>
+            <input type="date" id="date-end-picker" class="date-range-input" />
+            <button type="button" class="btn btn-secondary btn-small" id="clear-dates">Очистить</button>
+          </div>
+          <p class="info-text small date-range-hint" id="date-range-preview">
+            ${d.desiredDeliveryDate ? `Выбрано: ${escapeHtml(d.desiredDeliveryDate)}` : "Дата не выбрана"}
+          </p>
+        </div>
+        <div class="form-group">
+          <label>Комментарий</label>
+          <textarea name="comment" placeholder="Дополнительная информация...">${escapeHtml(d.comment)}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Создать заявку</button>
+      </form>
+    </div>`;
+
+  formState.step = "proxy-order";
+  document.getElementById("back-from-proxy-order").onclick = () => goToMain();
+
+  const form = document.getElementById("proxy-order-form");
+  const pickupBlock = form.querySelector(".pickup-block");
+
+  form.querySelector('[name="needsPickup"]').addEventListener("change", (e) => {
+    formState.orderData.needsPickup = e.target.checked;
+    if (e.target.checked && formState.orderData.pickupAddresses.length === 0) {
+      formState.orderData.pickupAddresses = [""];
+    }
+    goToCreateOrderForClient();
+  });
+
+  form.querySelector('[name="marketplace"]').addEventListener("change", (e) => {
+    formState.orderData.marketplace = e.target.value;
+    formState.orderData.warehouseId = "";
+    goToCreateOrderForClient();
+  });
+
+  form.addEventListener("input", (e) => {
+    const t = e.target;
+    if (t.name === "product") formState.orderData.product = t.value;
+    if (t.name === "quantity") formState.orderData.quantity = t.value;
+    if (t.name === "tz") formState.orderData.tz = t.value;
+    if (t.name === "comment") formState.orderData.comment = t.value;
+    if (t.name === "warehouseId") formState.orderData.warehouseId = t.value;
+    if (t.name === "clientId") formState.orderData.clientId = t.value;
+  });
+
+  // Обработка pickup адресов
+  pickupBlock?.querySelectorAll('[data-pickup-idx]').forEach((inp) => {
+    inp.addEventListener("input", (e) => {
+      const idx = parseInt(e.target.getAttribute("data-pickup-idx"));
+      formState.orderData.pickupAddresses[idx] = e.target.value;
+    });
+  });
+  pickupBlock?.querySelectorAll('[data-remove-pickup]').forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
+      formState.orderData.pickupAddresses.splice(idx, 1);
+      goToCreateOrderForClient();
+    });
+  });
+  document.getElementById("add-pickup")?.addEventListener("click", () => {
+    formState.orderData.pickupAddresses.push("");
+    goToCreateOrderForClient();
+  });
+
+  // Обработка дат
+  const dateStart = document.getElementById("date-start-picker");
+  const dateEnd = document.getElementById("date-end-picker");
+  const clearBtn = document.getElementById("clear-dates");
+
+  if (dateStart && dateEnd) {
+    dateStart.addEventListener("change", () => updateDateRange());
+    dateEnd.addEventListener("change", () => updateDateRange());
+  }
+  clearBtn?.addEventListener("click", () => {
+    formState.orderData.desiredDeliveryDate = "";
+    if (dateStart) dateStart.value = "";
+    if (dateEnd) dateEnd.value = "";
+    updateDateRange();
+  });
+
+  function updateDateRange() {
+    const start = dateStart.value;
+    const end = dateEnd.value;
+    if (start && end) {
+      formState.orderData.desiredDeliveryDate = `${start} — ${end}`;
+    } else if (start) {
+      formState.orderData.desiredDeliveryDate = start;
+    } else {
+      formState.orderData.desiredDeliveryDate = "";
+    }
+    document.getElementById("date-range-preview").textContent = formState.orderData.desiredDeliveryDate
+      ? `Выбрано: ${escapeHtml(formState.orderData.desiredDeliveryDate)}`
+      : "Дата не выбрана";
+  }
+
+  // Submit
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const clientId = form.querySelector('[name="clientId"]').value.trim();
+    if (!clientId) {
+      showNotification("⚠️ Укажите клиента");
+      return;
+    }
+    // Валидация и отправка как обычная заявка (тип "proxy")
+    saveOrder("proxy");
+  });
+}
+
 function goToEditBusiness() {
   renderEditBusiness();
 }
@@ -1806,9 +1996,9 @@ function getActionLabel(action) {
   const labels = {
     start_receiving: "📥 Начать приём",
     finish_receiving: "✅ Приём завершён",
-    send_to_sort: "📦 Отправить на сортировку",
-    ready_for_unload: "🚚 Готово к рейсу",
-    start_delivery: "🚚 Начать доставку",
+    send_to_sort: "📦 Начать сортировку",
+    ready_for_unload: "🚛 Готово к рейсу",
+    start_delivery: "🚛 Начать доставку",
     complete_delivery: "✅ Доставка завершена",
     finalize_order: "✅ Оформить заявку",
   };
