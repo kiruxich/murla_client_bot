@@ -250,6 +250,56 @@ export const getBusinessNamesForTelegramIds = async (
   return map;
 };
 
+/** Загружает всех зарегистрированных клиентов из таблицы clients. */
+export const getAllRegisteredClients = async (): Promise<
+  Array<{ id: number; username: string | null; businessName: string | null }>
+> => {
+  if (getDbBackend() === "postgres") {
+    const sql = getNeonSql();
+    const rows = asRowRecords(
+      await sql`
+        SELECT telegram_id, username, business_name
+        FROM clients
+        WHERE phone IS NOT NULL
+          AND TRIM(phone) <> ''
+          AND business_name IS NOT NULL
+          AND TRIM(business_name) <> ''
+        ORDER BY telegram_id ASC
+      `,
+    );
+    return rows.map((r) => ({
+      id: Number(r.telegram_id),
+      username: (r.username as string | null) || null,
+      businessName: (r.business_name as string | null) || null,
+    }));
+  }
+
+  const database = getDb();
+  const stmt = database.prepare(
+    `SELECT telegram_id, username, business_name FROM clients
+     WHERE phone IS NOT NULL
+       AND TRIM(phone) <> ''
+       AND business_name IS NOT NULL
+       AND TRIM(business_name) <> ''
+     ORDER BY telegram_id ASC`,
+  );
+  const rows: Array<{ id: number; username: string | null; businessName: string | null }> = [];
+  while (stmt.step()) {
+    const obj = stmt.getAsObject() as {
+      telegram_id: number;
+      username: string | null;
+      business_name: string | null;
+    };
+    rows.push({
+      id: obj.telegram_id,
+      username: obj.username || null,
+      businessName: obj.business_name || null,
+    });
+  }
+  stmt.free();
+  return rows;
+};
+
 export const getClientUsername = async (telegramId: number): Promise<string | undefined> => {
   if (getDbBackend() === "postgres") {
     const sql = getNeonSql();

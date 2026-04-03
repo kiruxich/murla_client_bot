@@ -828,37 +828,18 @@ async function handleClientsList(req: any, res: any, uid: number, effectiveRole:
       return;
     }
 
-    const allOrders = await orderStore.list();
-    const { getBusinessNamesForTelegramIds } = await import("../src/store/client-store.js");
+    const { getAllRegisteredClients } = await import("../src/store/client-store.js");
     
-    // Собираем уникальных клиентов из всех заявок
-    const clientIds = new Set<number>();
-    const clientsMap = new Map<number, { id: number; username?: string; businessName?: string }>();
-    
-    for (const order of allOrders) {
-      if (!clientsMap.has(order.clientTelegramId)) {
-        clientIds.add(order.clientTelegramId);
-        clientsMap.set(order.clientTelegramId, {
-          id: order.clientTelegramId,
-          username: order.clientUsername,
-          businessName: undefined, // будет заполнено ниже
-        });
-      }
-    }
-
-    // Загружаем актуальные названия магазинов
-    if (clientIds.size > 0) {
-      const businessNames = await getBusinessNamesForTelegramIds(Array.from(clientIds));
-      for (const [id, client] of clientsMap.entries()) {
-        client.businessName = businessNames.get(id) || undefined;
-      }
-    }
-
-    const clients = Array.from(clientsMap.values()).sort((a, b) => a.id - b.id);
+    // Загружаем всех зарегистрированных клиентов из таблицы clients
+    const clients = await getAllRegisteredClients();
 
     res.status(200).json({
       ok: true,
-      clients,
+      clients: clients.map((c) => ({
+        id: c.id,
+        username: c.username,
+        businessName: c.businessName,
+      })),
     });
   } catch (err) {
     console.error("[miniapp] clients-list error:", err);
