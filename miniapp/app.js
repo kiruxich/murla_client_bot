@@ -17,7 +17,7 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-02-cv20260402-3";
+const APP_BUILD = "2026-04-02-cv20260402-4";
 
 tg.ready();
 tg.expand();
@@ -850,7 +850,7 @@ async function renderDrafts() {
 
   try {
     const initData = getInitData();
-    const r = await fetch(`/api/miniapp?action=drafts?initData=${encodeURIComponent(initData)}`, {
+    const r = await fetch(`/api/miniapp?action=drafts&initData=${encodeURIComponent(initData)}`, {
       method: "GET",
       cache: "no-store",
       headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
@@ -1898,7 +1898,7 @@ async function renderOrderDetail(orderId) {
   try {
     const initData = getInitData();
     console.log("📥 Загружаю детали заявки:", orderId);
-    const r = await fetch(`/api/miniapp?action=order-detail?id=${encodeURIComponent(orderId)}&initData=${encodeURIComponent(initData)}`, {
+    const r = await fetch(`/api/miniapp?action=order-detail&id=${encodeURIComponent(orderId)}&initData=${encodeURIComponent(initData)}`, {
       method: "GET",
       cache: "no-store",
       headers: {
