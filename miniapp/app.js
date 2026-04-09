@@ -21,33 +21,22 @@ const APP_BUILD = "2026-04-02-cv20260402-7";
 
 tg.ready();
 tg.expand();
+tg.setHeaderColor("#08090E");
+tg.setBackgroundColor("#08090E");
 
-const isDark = tg.colorScheme === "dark";
-
+/** Палитра как в kis_kis_bot (единый тёмный UI) */
 const themeColors = {
-  light: {
-    bg: "#ffffff",
-    text: "#000000",
-    secondary: "#757575",
-    border: "#e0e0e0",
-    primary: "#0088cc",
-    success: "#31a24c",
-    error: "#d74545",
-    inputBg: "#f5f5f5",
-  },
-  dark: {
-    bg: "#1a1a1a",
-    text: "#ffffff",
-    secondary: "#b0b0b0",
-    border: "#333333",
-    primary: "#0088cc",
-    success: "#31a24c",
-    error: "#d74545",
-    inputBg: "#2a2a2a",
-  },
+  bg: "#08090E",
+  text: "#EAE5ED",
+  secondary: "#6B5F78",
+  border: "rgba(255, 255, 255, 0.06)",
+  primary: "#C3ACCE",
+  success: "#4ADE80",
+  error: "#F87171",
+  inputBg: "#1A1B24",
 };
 
-const colors = isDark ? themeColors.dark : themeColors.light;
+const colors = themeColors;
 
 document.documentElement.style.setProperty("--bg-color", colors.bg);
 document.documentElement.style.setProperty("--text-color", colors.text);
@@ -2019,7 +2008,7 @@ async function renderOrderDetail(orderId) {
         ${(formState.currentRole === "client" && o.status === "draft") ? `
         <div style="display: flex; gap: 8px; flex-direction: column;">
           <button type="button" class="btn btn-primary" id="btn-edit-order" style="flex: 1;">✏️ Редактировать</button>
-          <button type="button" class="btn btn-danger" id="btn-delete-order" style="flex: 1; background: #ff6b6b; color: white;">🗑️ Удалить</button>
+          <button type="button" class="btn btn-danger" id="btn-delete-order" style="flex: 1;">🗑️ Удалить</button>
         </div>
         ` : ""}
       </div>`;

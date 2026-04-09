@@ -17,37 +17,26 @@ window.fetch = function (...args) {
 };
 
 const tg = window.Telegram.WebApp;
-const APP_BUILD = "2026-04-03-cv20260403-5";
+const APP_BUILD = "2026-04-02-cv20260402-7";
 
 tg.ready();
 tg.expand();
+tg.setHeaderColor("#08090E");
+tg.setBackgroundColor("#08090E");
 
-const isDark = tg.colorScheme === "dark";
-
+/** Палитра как в kis_kis_bot (единый тёмный UI) */
 const themeColors = {
-  light: {
-    bg: "#ffffff",
-    text: "#000000",
-    secondary: "#757575",
-    border: "#e0e0e0",
-    primary: "#0088cc",
-    success: "#31a24c",
-    error: "#d74545",
-    inputBg: "#f5f5f5",
-  },
-  dark: {
-    bg: "#1a1a1a",
-    text: "#ffffff",
-    secondary: "#b0b0b0",
-    border: "#333333",
-    primary: "#0088cc",
-    success: "#31a24c",
-    error: "#d74545",
-    inputBg: "#2a2a2a",
-  },
+  bg: "#08090E",
+  text: "#EAE5ED",
+  secondary: "#6B5F78",
+  border: "rgba(255, 255, 255, 0.06)",
+  primary: "#C3ACCE",
+  success: "#4ADE80",
+  error: "#F87171",
+  inputBg: "#1A1B24",
 };
 
-const colors = isDark ? themeColors.dark : themeColors.light;
+const colors = themeColors;
 
 document.documentElement.style.setProperty("--bg-color", colors.bg);
 document.documentElement.style.setProperty("--text-color", colors.text);
@@ -200,37 +189,25 @@ function renderPickupRows() {
     .join("");
 }
 
-function refreshPickupBlockHTML(block) {
-  block.innerHTML = `
-    <label>Точки забора</label>
-    ${renderPickupRows()}
-    <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
-    ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
-  `;
-}
-
-function bindPickupBlock(block) {
-  if (!block) return;
-  block.addEventListener("input", (e) => {
-    if (e.target.hasAttribute("data-pickup-idx")) {
-      const idx = parseInt(e.target.getAttribute("data-pickup-idx"));
-      formState.orderData.pickupAddresses[idx] = e.target.value;
-    }
+function bindPickupInputs() {
+  document.querySelectorAll(".pickup-input").forEach((el) => {
+    el.addEventListener("input", (e) => {
+      const i = Number(e.target.dataset.idx);
+      formState.orderData.pickupAddresses[i] = e.target.value;
+      if (formState.errors.pickupAddresses) delete formState.errors.pickupAddresses;
+    });
   });
-  block.addEventListener("click", (e) => {
-    if (e.target.hasAttribute("data-remove-pickup")) {
-      e.preventDefault();
-      const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
-      formState.orderData.pickupAddresses.splice(idx, 1);
+  document.querySelectorAll("[data-remove]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const el = e.target.closest("[data-remove]");
+      const i = Number(el?.dataset?.remove);
+      if (Number.isNaN(i)) return;
+      formState.orderData.pickupAddresses.splice(i, 1);
       if (formState.orderData.pickupAddresses.length === 0) {
         formState.orderData.pickupAddresses = [""];
       }
-      refreshPickupBlockHTML(block);
-    }
-    if (e.target.id === "add-pickup" || e.target.closest("#add-pickup")) {
-      formState.orderData.pickupAddresses.push("");
-      refreshPickupBlockHTML(block);
-    }
+      renderNewOrder();
+    });
   });
 }
 
@@ -486,37 +463,13 @@ function renderNewOrder() {
     if (e.target.checked && formState.orderData.pickupAddresses.length === 0) {
       formState.orderData.pickupAddresses = [""];
     }
-    if (pickupBlock) {
-      pickupBlock.style.display = e.target.checked ? "" : "none";
-      if (e.target.checked) {
-        pickupBlock.innerHTML = `
-          <label>Точки забора</label>
-          ${renderPickupRows()}
-          <button type="button" class="btn btn-secondary btn-small" id="add-pickup">+ Ещё адрес</button>
-          ${formState.errors.pickupAddresses ? `<span class="error-text">${escapeHtml(formState.errors.pickupAddresses)}</span>` : ""}
-        `;
-        bindPickupBlock(pickupBlock);
-      }
-    }
+    renderNewOrder();
   });
 
   form.querySelector('[name="marketplace"]').addEventListener("change", (e) => {
     formState.orderData.marketplace = e.target.value;
     formState.orderData.warehouseId = "";
-    const warehouseSelect = form.querySelector('[name="warehouseId"]');
-    const mVal = e.target.value;
-    const wList = warehousesForMarketplace(mVal);
-    if (whGroup) {
-      whGroup.style.display = mVal ? "" : "none";
-    }
-    if (warehouseSelect) {
-      warehouseSelect.innerHTML = '<option value="">Выберите склад</option>' +
-        wList.map((w) => {
-          const isWb = mVal === "wb";
-          const cn = isWb ? "warehouse-option wb-warehouse" : "warehouse-option ozon-warehouse";
-          return `<option value="${escapeHtml(w.id)}" class="${cn}">${escapeHtml(w.label)}${w.note ? " — " + escapeHtml(w.note) : ""}</option>`;
-        }).join("");
-    }
+    renderNewOrder();
   });
 
   form.addEventListener("input", (e) => {
@@ -589,7 +542,14 @@ function renderNewOrder() {
     };
   }
 
-  bindPickupBlock(pickupBlock);
+  const addBtn = document.getElementById("add-pickup");
+  if (addBtn) {
+    addBtn.onclick = () => {
+      formState.orderData.pickupAddresses.push("");
+      renderNewOrder();
+    };
+  }
+  bindPickupInputs();
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1838,33 +1798,13 @@ function goToCreateOrderForClient() {
     if (e.target.checked && formState.orderData.pickupAddresses.length === 0) {
       formState.orderData.pickupAddresses = [""];
     }
-    // Показываем/скрываем блок, не перерисовываем форму
-    const pickupBlockElement = pickupBlock;
-    if (pickupBlockElement) {
-      pickupBlockElement.style.display = e.target.checked ? "" : "none";
-      if (e.target.checked) {
-        refreshPickupBlockHTML(pickupBlockElement);
-        bindPickupBlock(pickupBlockElement);
-      }
-    }
+    goToCreateOrderForClient();
   });
 
   form.querySelector('[name="marketplace"]').addEventListener("change", (e) => {
     formState.orderData.marketplace = e.target.value;
     formState.orderData.warehouseId = "";
-    // Обновляем список складов
-    const warehouseSelect = form.querySelector('[name="warehouseId"]');
-    const m = e.target.value;
-    const whList = warehousesForMarketplace(m);
-    const warehouseGroup = warehouseSelect?.closest(".form-group");
-    
-    if (warehouseGroup) {
-      warehouseGroup.style.display = m ? "" : "none";
-      warehouseSelect.innerHTML = '<option value="">Выберите склад</option>';
-      warehouseSelect.innerHTML += whList
-        .map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.label)}${w.note ? " — " + escapeHtml(w.note) : ""}</option>`)
-        .join("");
-    }
+    goToCreateOrderForClient();
   });
 
   form.addEventListener("input", (e) => {
@@ -1878,6 +1818,27 @@ function goToCreateOrderForClient() {
   // Обработка изменения SELECT элементов
   form.querySelector('[name="warehouseId"]')?.addEventListener("change", (e) => {
     formState.orderData.warehouseId = e.target.value;
+  });
+
+  // Обработка pickup адресов через event delegation
+  pickupBlock?.addEventListener("input", (e) => {
+    if (e.target.hasAttribute("data-pickup-idx")) {
+      const idx = parseInt(e.target.getAttribute("data-pickup-idx"));
+      formState.orderData.pickupAddresses[idx] = e.target.value;
+    }
+  });
+  
+  pickupBlock?.addEventListener("click", (e) => {
+    if (e.target.hasAttribute("data-remove-pickup")) {
+      e.preventDefault();
+      const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
+      formState.orderData.pickupAddresses.splice(idx, 1);
+      goToCreateOrderForClient();
+    }
+  });
+  document.getElementById("add-pickup")?.addEventListener("click", () => {
+    formState.orderData.pickupAddresses.push("");
+    goToCreateOrderForClient();
   });
 
   // Обработка дат
@@ -1922,9 +1883,6 @@ function goToCreateOrderForClient() {
     // Используем функцию submitOrder которая уже существует в коде
     submitProxyOrder();
   });
-
-  // Инициализируем обработчики для pickup адресов
-  bindPickupBlock(pickupBlock);
 }
 
 function goToEditBusiness() {
@@ -2021,14 +1979,19 @@ async function renderOrderDetail(orderId) {
         </div>
 
         <!-- Дополнительно -->
+        ${o.desiredDeliveryDate ? `
         <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
           <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">📅 Желаемая дата поставки</p>
-          <p style="font-size: 14px; font-weight: 600; margin: 0;">${o.desiredDeliveryDate ? escapeHtml(o.desiredDeliveryDate) : "Не выбрана"}</p>
+          <p style="font-size: 14px; font-weight: 600; margin: 0;">${escapeHtml(o.desiredDeliveryDate)}</p>
         </div>
+        ` : ""}
+
+        ${o.approvedDeliveryDate ? `
         <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
-          <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">📌 Финальная дата поставки</p>
-          <p style="font-size: 14px; font-weight: 600; margin: 0;">${o.approvedDeliveryDate ? escapeHtml(o.approvedDeliveryDate) : "Не выбрана"}</p>
+          <p style="font-size: 12px; color: var(--secondary-color); margin: 0 0 8px 0;">✅ Утверждённая дата</p>
+          <p style="font-size: 14px; font-weight: 600; margin: 0;">${escapeHtml(o.approvedDeliveryDate)}</p>
         </div>
+        ` : ""}
 
         ${o.comment ? `
         <div style="background: var(--input-bg); border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
@@ -2045,7 +2008,7 @@ async function renderOrderDetail(orderId) {
         ${(formState.currentRole === "client" && o.status === "draft") ? `
         <div style="display: flex; gap: 8px; flex-direction: column;">
           <button type="button" class="btn btn-primary" id="btn-edit-order" style="flex: 1;">✏️ Редактировать</button>
-          <button type="button" class="btn btn-danger" id="btn-delete-order" style="flex: 1; background: #ff6b6b; color: white;">🗑️ Удалить</button>
+          <button type="button" class="btn btn-danger" id="btn-delete-order" style="flex: 1;">🗑️ Удалить</button>
         </div>
         ` : ""}
       </div>`;
@@ -2060,7 +2023,7 @@ async function renderOrderDetail(orderId) {
         btn.type = "button";
         btn.className = "btn btn-primary";
         btn.textContent = getActionLabel(action);
-        btn.onclick = (e) => executeOrderAction(orderId, action, e, o.approvedDeliveryDate || "");
+        btn.onclick = (e) => executeOrderAction(orderId, action, e);
         actionsContainer.appendChild(btn);
       }
     }
@@ -2095,7 +2058,6 @@ function getActionLabel(action) {
     finish_receiving: "✅ Приём завершён",
     send_to_sort: "📦 Начать сортировку",
     ready_for_unload: "🚛 Готово к рейсу",
-    set_delivery_date: "📅 Выбрать финальную дату",
     start_delivery: "🚛 Начать доставку",
     complete_delivery: "✅ Доставка завершена",
     finalize_order: "✅ Оформить заявку",
@@ -2126,62 +2088,7 @@ function renderStatusStep(label, currentStatus, stepStatus) {
     </div>`;
 }
 
-function openFinalDeliveryDateModal(currentValue = "") {
-  return new Promise((resolve) => {
-    const currentIso = currentValue.includes("-")
-      ? currentValue
-      : formatDateToIso(currentValue);
-    const overlay = document.createElement("div");
-    overlay.style.cssText = [
-      "position: fixed",
-      "inset: 0",
-      "background: rgba(0,0,0,0.6)",
-      "display: flex",
-      "align-items: center",
-      "justify-content: center",
-      "z-index: 9999",
-      "padding: 16px",
-    ].join(";");
-    overlay.innerHTML = `
-      <div style="width: 100%; max-width: 380px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
-        <p style="margin: 0 0 10px 0; font-size: 16px; font-weight: 700;">Финальная дата поставки</p>
-        <p style="margin: 0 0 12px 0; font-size: 12px; color: var(--secondary-color);">Выберите дату перед началом доставки</p>
-        <input id="final-date-input" type="date" value="${escapeHtml(currentIso)}" style="width: 100%; box-sizing: border-box; border: 1px solid var(--border-color); border-radius: 8px; background: var(--input-bg); color: var(--text-color); padding: 10px;" />
-        <div style="display: flex; gap: 8px; margin-top: 12px;">
-          <button type="button" id="final-date-cancel" class="btn btn-secondary" style="flex: 1;">Отмена</button>
-          <button type="button" id="final-date-save" class="btn btn-primary" style="flex: 1;">Сохранить</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    const cleanup = () => {
-      overlay.remove();
-    };
-
-    const cancelBtn = overlay.querySelector("#final-date-cancel");
-    const saveBtn = overlay.querySelector("#final-date-save");
-    const input = overlay.querySelector("#final-date-input");
-
-    cancelBtn?.addEventListener("click", () => {
-      cleanup();
-      resolve(null);
-    });
-
-    saveBtn?.addEventListener("click", () => {
-      const selectedIso = input?.value || "";
-      if (!selectedIso) {
-        showNotification("⚠️ Укажите дату доставки");
-        return;
-      }
-      const displayDate = formatDateFromIso(selectedIso) || selectedIso;
-      cleanup();
-      resolve(displayDate);
-    });
-  });
-}
-
-async function executeOrderAction(orderId, action, event, currentApprovedDeliveryDate = "") {
+async function executeOrderAction(orderId, action, event) {
   const btn = event?.target;
   if (!btn) {
     showNotification("❌ Не удалось выполнить действие");
@@ -2192,22 +2099,6 @@ async function executeOrderAction(orderId, action, event, currentApprovedDeliver
 
   try {
     const initData = getInitData();
-    let approvedDeliveryDate = "";
-    if (action === "set_delivery_date") {
-      const selectedDate = await openFinalDeliveryDateModal(currentApprovedDeliveryDate);
-      if (selectedDate === null) {
-        btn.disabled = false;
-        btn.textContent = getActionLabel(action);
-        return;
-      }
-      approvedDeliveryDate = String(selectedDate).trim();
-      if (!approvedDeliveryDate) {
-        showNotification("⚠️ Укажите дату доставки");
-        btn.disabled = false;
-        btn.textContent = getActionLabel(action);
-        return;
-      }
-    }
     console.log("📤 Выполняю действие:", action, "для заявки:", orderId);
     const r = await fetch("/api/miniapp?action=order-status", {
       method: "POST",
@@ -2220,24 +2111,18 @@ async function executeOrderAction(orderId, action, event, currentApprovedDeliver
         initData,
         id: orderId,
         action,
-        approvedDeliveryDate,
       }),
     });
     const j = await r.json();
     console.log("✅ Order status response:", j);
 
     if (j.ok) {
-      showNotification(action === "set_delivery_date" ? "✅ Финальная дата сохранена" : "✅ Статус обновлён!");
+      showNotification("✅ Статус обновлён!");
       setTimeout(() => {
         renderOrderDetail(orderId);
       }, 800);
     } else {
-      const errorText = j.error === "missing_delivery_date"
-        ? "Сначала выберите финальную дату доставки"
-        : j.error === "invalid_delivery_date"
-          ? "Некорректная дата доставки"
-          : (j.error || "unknown");
-      showNotification("❌ Ошибка: " + errorText);
+      showNotification("❌ Ошибка: " + (j.error || "unknown"));
       btn.disabled = false;
       btn.textContent = getActionLabel(action);
     }
@@ -2584,27 +2469,7 @@ function showOrderSummary(orderData) {
       console.log("✅ create-order response:", j, "status:", r.status);
       console.log("✅ create-order response:", j);
       if (j.ok) {
-        const orderId = j.orderId;
-        showNotification("✅ Черновик №" + orderId + " создан!");
-        
-        // Показываем экран подтверждения
-        app.innerHTML = `
-          <div class="container">
-            <div class="header">
-              <h2>✅ Черновик создан</h2>
-            </div>
-            <div class="summary-card" style="text-align: center; padding: 32px 16px;">
-              <p style="font-size: 18px; margin-bottom: 16px;">
-                <strong>Заявка №${escapeHtml(orderId)}</strong>
-              </p>
-              <p style="font-size: 16px; color: var(--secondary-color); margin-bottom: 24px; line-height: 1.5;">
-                📋 Черновик создан успешно!<br><br>
-                Проверьте и подтвердите отправку в чате с <strong>@MurlaBot</strong> перед тем как начать работу.
-              </p>
-              <button type="button" class="btn btn-primary" id="back-to-main">← К меню</button>
-            </div>
-          </div>
-        `;
+        showNotification("✅ Заявка №" + j.orderId + " создана! Смотрите чат бота.");
         formState.orderData = {
           product: "",
           quantity: "",
@@ -2617,7 +2482,7 @@ function showOrderSummary(orderData) {
           comment: "",
         };
         formState.errors = {};
-        document.getElementById("back-to-main").onclick = () => goToMain();
+        setTimeout(() => tg.close(), 1500);
       } else {
         const msg = j.error === "not_registered" ? "Завершите регистрацию в боте"
           : j.error === "client_role_required" ? "Доступно только в роли Клиент"
