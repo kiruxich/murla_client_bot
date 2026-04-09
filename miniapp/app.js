@@ -192,15 +192,16 @@ function renderPickupRows() {
 function bindPickupInputs() {
   document.querySelectorAll(".pickup-input").forEach((el) => {
     el.addEventListener("input", (e) => {
-      const i = Number(e.target.dataset.idx);
+      const i = Number(e.target.getAttribute("data-pickup-idx"));
+      if (Number.isNaN(i)) return;
       formState.orderData.pickupAddresses[i] = e.target.value;
       if (formState.errors.pickupAddresses) delete formState.errors.pickupAddresses;
     });
   });
-  document.querySelectorAll("[data-remove]").forEach((btn) => {
+  document.querySelectorAll("[data-remove-pickup]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
-      const el = e.target.closest("[data-remove]");
-      const i = Number(el?.dataset?.remove);
+      const el = e.target.closest("[data-remove-pickup]");
+      const i = el ? Number(el.getAttribute("data-remove-pickup")) : NaN;
       if (Number.isNaN(i)) return;
       formState.orderData.pickupAddresses.splice(i, 1);
       if (formState.orderData.pickupAddresses.length === 0) {
@@ -1829,12 +1830,13 @@ function goToCreateOrderForClient() {
   });
   
   pickupBlock?.addEventListener("click", (e) => {
-    if (e.target.hasAttribute("data-remove-pickup")) {
-      e.preventDefault();
-      const idx = parseInt(e.target.getAttribute("data-remove-pickup"));
-      formState.orderData.pickupAddresses.splice(idx, 1);
-      goToCreateOrderForClient();
-    }
+    const removeBtn = e.target.closest("[data-remove-pickup]");
+    if (!removeBtn) return;
+    e.preventDefault();
+    const idx = Number(removeBtn.getAttribute("data-remove-pickup"));
+    if (Number.isNaN(idx)) return;
+    formState.orderData.pickupAddresses.splice(idx, 1);
+    goToCreateOrderForClient();
   });
   document.getElementById("add-pickup")?.addEventListener("click", () => {
     formState.orderData.pickupAddresses.push("");
